@@ -1,0 +1,16 @@
+# Terraform state + local secrets — NEVER commit
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Real secret values (the .example templates ARE committed)
+secrets.auto.tfvars
+*.local.tfvars
+
+# CLI overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

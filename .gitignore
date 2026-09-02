@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Local environment (real hosts/IPs) — the .example template IS committed
+config.env
+
+# Never commit secrets — join token lives at ~/.config/niosx/jointoken,
+# CSP API key in terraform/secrets.auto.tfvars (see terraform/.gitignore)
+*jointoken*
+*.ibjt
+
+# Local scratch
+*.log
+tmp/
