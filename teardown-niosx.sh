@@ -140,7 +140,7 @@ if [ "$N_MATCH" = "1" ]; then
   if [ "$VM_GONE" = "0" ] && [ -n "$VM_NAME" ] && [ "$VM_NAME" != "$CSP_NAME" ]; then
     NAME_NOTE="   NOTE: Proxmox calls it '$VM_NAME', the Portal calls it '$CSP_NAME' (matched by MAC)."
   fi
-  # wire-services.sh keys niosx_hosts.json and the Terraform resources by the
+  # add-services.sh keys niosx_hosts.json and the Terraform resources by the
   # CSP display name, so that is the authoritative label once we have a match.
   if [ -z "$LABEL_OPT" ] && [ -n "$CSP_NAME" ]; then LABEL=$CSP_NAME; fi
   if [ "$VM_GONE" = "1" ]; then

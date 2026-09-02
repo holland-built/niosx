@@ -104,7 +104,7 @@ Registration takes ~2–3 min, services ~3–5 min more; the script waits up to 
 ## Add services to an existing host
 
 ```bash
-./wire-services.sh <vmid> <owner>-<vmid> dns,dhcp
+./add-services.sh <vmid> <owner>-<vmid> dns,dhcp
 ```
 
 ## Naming in a shared tenant

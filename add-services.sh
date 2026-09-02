@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wait for a NIOS-X VM to register in CSP, rename it, then start services on it.
 #
-#   ./wire-services.sh <vmid> <label> <dns,dhcp>
+#   ./add-services.sh <vmid> <label> <dns,dhcp>
 #
 # The host is matched by MAC address using a server-side filter — ZTP assigns an
 # auto-generated "ZTP_<join-token-name>_<digits>" display name, so name matching
@@ -14,9 +14,9 @@ CONFIG=${NIOSX_CONFIG:-$HERE/config.env}
 # shellcheck source=/dev/null
 . "$CONFIG"
 
-VMID=${1:?usage: wire-services.sh <vmid> <label> <services>}
-LABEL=${2:?usage: wire-services.sh <vmid> <label> <services>}
-SERVICES=${3:?usage: wire-services.sh <vmid> <label> <services>}
+VMID=${1:?usage: add-services.sh <vmid> <label> <services>}
+LABEL=${2:?usage: add-services.sh <vmid> <label> <services>}
+SERVICES=${3:?usage: add-services.sh <vmid> <label> <services>}
 SERVICES=$(printf '%s' "$SERVICES" | tr -d '[:space:]')
 case "$SERVICES" in
   ""|none) echo "!! no services requested — nothing to do" >&2; exit 1 ;;

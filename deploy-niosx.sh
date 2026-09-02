@@ -291,12 +291,12 @@ qm start $VMID
 EOF
   echo ">> VM $VMID starting + auto-registering."
   if [ "$SERVICES" != "none" ]; then
-    echo ">> 6/6  Wiring services once it registers"
-    "$HERE/wire-services.sh" "$VMID" "$NAME" "$SERVICES"
+    echo ">> 6/6  Adding services once it registers"
+    "$HERE/add-services.sh" "$VMID" "$NAME" "$SERVICES"
     echo ">> DONE. $NAME deployed and running: $SERVICES"
   else
     echo ">> DONE. VM started. Registration happens on its own (~2-3 min) - not verified here."
-    echo "   Start some later: ./wire-services.sh $VMID $NAME dns,dhcp"
+    echo "   Start some later: ./add-services.sh $VMID $NAME dns,dhcp"
   fi
 else
   echo ">> 4/6  No join token given — VM built + STOPPED. Start with: qm start $VMID"
