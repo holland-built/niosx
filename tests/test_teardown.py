@@ -45,4 +45,14 @@ case("--dry-run changes nothing on the host",
      script="teardown-niosx.sh", args=("250", "--dry-run"), env={"STUB_QM_CONFIG": VM},
      has=["(--dry-run: nothing changed)"], log_hasnt=["REMOTE-SCRIPT"])
 
+# ---- shapes the live API really returns (found on 2026-09-02) ----
+# A query that matches nothing answers {} with no "results" key. Read as a
+# failed lookup, teardown refused to run at all.
+case("a host that is not in the Portal is 'not registered', not a failed lookup",
+     script="teardown-niosx.sh", args=("250", "--dry-run"), env={"STUB_QM_CONFIG": VM},
+     has=["not registered"], hasnt=["CSP lookup failed"])
+case("./niosx list shows the services a host is really running",
+     script="list-niosx.sh", env={"STUB_HOST_REGISTERED": "1"},
+     has=["dhcp,dns"])
+
 sys.exit(report())

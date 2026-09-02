@@ -147,7 +147,7 @@ REMOTE=/var/lib/vz/template/qcow
 # The name is reused inside a remote shell command. A downloaded image often
 # has spaces in it (Windows especially), so keep only characters that survive
 # the trip; the local file is untouched.
-BASENAME=$(basename "$IMG" | tr -c 'A-Za-z0-9._-' '_')
+BASENAME=$(printf '%s' "$(basename "$IMG")" | tr -c 'A-Za-z0-9._-' '_')
 
 # NOTE: do NOT set an SMBIOS serial. Infoblox uses serial numbers for ZTP of
 # *purchased hardware*; a made-up serial makes the appliance wait to be claimed
@@ -371,20 +371,31 @@ if [ -z "$RESUME" ]; then
   fi
 
   # The tenant is shared by hundreds of engineers, so the host name has to be
-  # free tenant-wide, not just on this Proxmox host. Best effort: if the query
-  # cannot run we say so rather than pretending the name was checked.
+  # free tenant-wide, not just on this Proxmox host. A tenant with no match
+  # answers with a bare {} — no "results" key at all — which is a free name,
+  # NOT a failed query. Only a non-200 or unparseable body counts as skipped.
   if k=$(csp_key 2>/dev/null); then
-    taken=$(curl -s --max-time 20 -G -H "Authorization: Token $k" \
-              --data-urlencode "_filter=display_name==\"$NAME\"" \
-              "$CSP/api/infra/v1/detail_hosts" \
-            | python3 -c 'import sys,json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
+    nm=$(curl -s -w '\n%{http_code}' --max-time 20 -G -H "Authorization: Token $k" \
+           --data-urlencode "_filter=display_name==\"$NAME\"" \
+           "$CSP/api/infra/v1/detail_hosts" || true)
+    nm_code=$(printf '%s' "$nm" | tail -1)
+    if [ "$nm_code" = 200 ]; then
+      taken=$(printf '%s' "$nm" | sed '$d' | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("?"); raise SystemExit
+if not isinstance(d, dict):
+    print("?"); raise SystemExit
 r = d.get("results")
-print(len(r) if isinstance(r, list) else "?")' 2>/dev/null || true)
-    case "${taken:-}" in
-      ""|"?") echo ">> name check: skipped ($CSP would not answer the name query)" ;;
+print(len(r) if isinstance(r, list) else (0 if r is None else "?"))' 2>/dev/null || printf '?')
+    else
+      taken="?"
+    fi
+    case "$taken" in
       0)      echo ">> name check: \"$NAME\" is free in the tenant" ;;
+      ""|"?") echo ">> name check: skipped (the tenant name query answered HTTP $nm_code)" ;;
       *)      echo "!! \"$NAME\" already exists in this shared tenant ($taken host(s))." >&2
               echo "   OWNER=\"$OWNER\" is not unique, or you already built this host." >&2
               echo "   Pick another name: ./niosx deploy --vmid $VMID --name <something-unique>" >&2

@@ -43,26 +43,46 @@ fi
 echo
 echo "== Infoblox Portal (yours) =="
 if [ -n "$KEY" ]; then
+  # detail_hosts[].configs only ever lists platform/appmgmt — the real services
+  # live on their own endpoint, and reference the host as "infra/host/<id>"
+  # while detail_hosts returns that id bare. Same trap as pool_id.
+  # shellcheck disable=SC2064  # expand SVC_JSON now, not at trap time
+  SVC_JSON=$(mktemp)
+  trap 'rm -f "$SVC_JSON"' EXIT HUP INT TERM
+  # NOT an unfiltered listing: ?_limit=500 came back with 101 records and this
+  # owner's services were not among them. Filter server-side, same as the hosts.
+  curl -s --max-time 40 -G -H "Authorization: Token $KEY" \
+       --data-urlencode "_filter=name~\"$OWNER-\"" \
+       "$CSP/api/infra/v1/services" > "$SVC_JSON" 2>/dev/null || true
   curl -s --max-time 40 -H "Authorization: Token $KEY" "$CSP/api/infra/v1/detail_hosts?_limit=500" \
   | python3 -c '
 import sys,json
-owner=sys.argv[1]
+owner, svc_path = sys.argv[1], sys.argv[2]
 if not owner: print("  (OWNER not set)"); raise SystemExit
 try: d=json.load(sys.stdin)
 except Exception: print("  (Portal query failed)"); raise SystemExit
+try:
+    svc=json.load(open(svc_path))
+except Exception:
+    svc={}
+by_host={}
+for s in (svc.get("results") or []):
+    for c in (s.get("configs") or []):
+        hid=(c.get("host_id") or "").rsplit("/",1)[-1]      # infra/host/<id> -> <id>
+        if hid: by_host.setdefault(hid,set()).add(s.get("service_type") or "?")
 def mine(h):
     n = h.get("display_name") or ""
     # renamed hosts carry the owner prefix; un-renamed ZTP hosts carry the
     # join-token name, which is why the token should be named after you
     return n.startswith(owner + "-") or (n.startswith("ZTP_") and owner in n)
-rows=[h for h in d.get("results",[]) if mine(h)]
+rows=[h for h in (d.get("results") or []) if mine(h)]
 if not rows: print("  (none)")
 for h in rows:
-    svcs=",".join(sorted(c.get("service_type","") for c in (h.get("configs") or [])
-                         if c.get("service_type") not in ("platform","appmgmt"))) or "-"
+    svcs=",".join(sorted(by_host.get(h.get("id") or "", ()))) or "-"
     print("  %-38s %-16s %-9s %s" % (h.get("display_name"), h.get("ip_address") or "?",
                                      h.get("composite_status"), svcs))
-' "$OWNER"
+' "$OWNER" "$SVC_JSON"
+  rm -f "$SVC_JSON"; trap - EXIT HUP INT TERM
 else
   echo "  (no CSP API key configured)"
 fi

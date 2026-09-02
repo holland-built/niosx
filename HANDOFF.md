@@ -26,7 +26,8 @@ Another removes all of it. Aimed at ~700 sales engineers sharing one CSP tenant.
 | Blast-radius isolation | tearing down one host left the other's VM, services, state and Portal record untouched |
 | Never-reuse VMIDs | counter at 204 after 201/202/204 retired |
 | **Interactive prompts + numbered menu** | 39 assertions in `tests/`, driven through a real pty |
-| **`--resume`** | tested against every half-built shape (no disk, no seed, running, foreign VM) — stubbed, not yet on real hardware |
+| **`--resume`** | VM 205, live: deploy failed at disk import, resume imported the disk, built and attached the seed, started it, and it registered in ~2 min; torn down clean afterwards |
+| **`./niosx add`** | 7 assertions — register, rename, record, apply |
 
 Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 
@@ -49,6 +50,16 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 - **A tainted resource after a failed apply** will be destroyed and recreated by
   the next apply. `tofu untaint` instead.
 - **`--purge` does not remove the seed ISO**, which contains the join token.
+- **A query that matches nothing returns a bare `{}`** — no `results` key at
+  all. Read as a failed lookup, teardown refuses to run on a host that is
+  simply not registered. `results` missing = zero matches, not an error.
+- **Services are not in `detail_hosts[].configs`** — that only ever lists
+  `platform` and `appmgmt`. They live at `/api/infra/v1/services`, and refer to
+  their host as `infra/host/<id>` while `detail_hosts` returns that id bare.
+  Same prefixed-vs-bare trap as `pool_id`.
+- **`/api/infra/v1/services?_limit=500` returned 101 records** and this owner's
+  services were not among them. Filter server-side (`_filter=name~"<owner>-"`),
+  never page a listing client-side. Same 101 cap as `/hosts`.
 - **The prompts are behind `[ -t 0 ]`.** A plain `subprocess` never reaches
   them; that is why they went untested for so long. `tests/harness.py` uses a
   pty. Do not "simplify" that away.
@@ -65,6 +76,9 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 | The teardown journal was written and never read | reported on the next teardown, and by `./niosx list` |
 | A failed deploy left a VM you could only delete | `./niosx deploy --resume <vmid>` |
 | The host name was spliced into JSON for the CSP rename | built with `json.dumps` |
+| Teardown refused to run on a host that was not in the Portal, calling it a failed lookup | a bare `{}` is read as zero matches |
+| `./niosx list` always showed `-` for services, whatever was running | read from `/api/infra/v1/services`, filtered server-side |
+| The image basename picked up a trailing `_` and shipped a duplicate 3.2 GB file | `basename`'s newline is stripped before sanitising |
 | CRLF in `config.env` failed three steps later, unrecognisably | named at startup |
 
 ## Known gaps
@@ -72,8 +86,9 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 | Gap | Note |
 |-----|------|
 | Windows | hardened for WSL2 and covered by tests for the two known traps (CRLF, spaces in the image name), but never actually run on Windows |
-| `--resume` on real hardware | every shape is covered by stubbed tests; it has not yet finished a genuinely half-built VM |
+| Resuming a seed-less VM needs a terminal | matched by name alone, so it asks before touching anything. There is deliberately no `--yes` |
 | Service names | services are `<host>-<svc>`, so they are unique once the host name is. Not separately checked |
+| `./niosx list` "next VMID" | prints counter+1, which can name an occupied id. Cosmetic: allocation itself skips occupied ids |
 
 ## Where things live
 
@@ -87,6 +102,7 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 | `~/.config/niosx/teardown/<vmid>.json` | journal of a teardown in progress |
 | `lib.sh` | shared validators (names, VMIDs, OWNER, CRLF) |
 | `tests/` | stubbed suite; `./niosx test` |
+| `NIOSX_HOSTS_JSON` | points this script *and* Terraform (`TF_VAR_hosts_file`) at one hosts file — used by the tests |
 
 ## If you pick this up
 

@@ -128,6 +128,6 @@ case("CRLF in config.env is named, not left to surface later",
      has=["carriage return", "config.env"], log_hasnt=["RSYNC"])
 case("an image name with spaces still lands on Proxmox intact",
      setup=spacey_image, args=("--services", "none") + PIN,
-     capture_has=["NIOS-X_OnPrem_v4.qcow2"], log_has=["RSYNC"])
+     capture_has=['"/var/lib/vz/template/qcow/NIOS-X_OnPrem_v4.qcow2"'], log_has=["RSYNC"])
 
 sys.exit(report())

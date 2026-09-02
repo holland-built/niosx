@@ -22,28 +22,23 @@ DONE AND VERIFIED LIVE
 - Full lifecycle twice: VM 202 (dns,dhcp) and VM 201 (dns,ntp), both built then
   torn down completely, with a second host provably untouched each time.
 - One host is currently live (see `./niosx list`) running DNS + DHCP. Leave it up.
-- Next VMID is 205 (never-reuse counter at /etc/niosx/last_vmid on the Proxmox host).
-- 2026-09-02: interactive path driven through a real pty at last (39 assertions in
+- Next VMID is 206 (never-reuse counter at /etc/niosx/last_vmid on the Proxmox host).
+- 2026-09-02: interactive path driven through a real pty at last (48 assertions in
   tests/), which turned up a command injection through the Name prompt — a name of
   x;reboot ran `reboot` as root on the Proxmox host. Fixed, plus --resume, live
   service validation, tenant-wide name check, enforced OWNER, and the teardown
   journal is finally read. See "Fixed on 2026-09-02" in HANDOFF.md.
+- 2026-09-02: --resume proven on real hardware. VM 205 was deliberately failed at
+  the disk-import step, resumed, registered in ~2 min, then torn down clean; the
+  live host 203 was untouched throughout. VMID counter is now 205, next id 206.
 
 REMAINING WORK, most valuable first
-1. --resume has never finished a genuinely half-built VM. Every shape is covered
-   by stubbed tests; kill a real deploy after `qm create` and resume it.
-2. Windows is documented as WSL2-only and the two known traps (CRLF config,
-   spaces in the image filename) are now handled and tested, but nobody has run
-   any of it on Windows. Needs a real machine.
-3. `./niosx add` is not covered by the test suite: it writes
-   terraform/niosx_hosts.json at a fixed path, so a test would touch the real
-   file. Give it a NIOSX_HOSTS_JSON override, then test the wait/rename/apply path.
-4. The tenant name check uses `_filter=display_name=="..."` on detail_hosts. If
-   the API does not support that filter it prints "name check: skipped" — confirm
-   against the live tenant which branch actually runs.
-5. HANDOFF.md carried a real internal IP until 2026-09-02. It is gone from the
-   working tree but still in git history (commit c657dbe) of a PUBLIC repo.
-   Decide: leave it (RFC1918, low value) or rewrite history.
+1. Windows. Documented as WSL2-only. The two known traps (CRLF config.env, spaces
+   in the image filename) are handled and covered by tests, but nothing has been
+   run on an actual Windows machine: wsl --install, the OpenTofu deb, an ssh key
+   from WSL to Proxmox, and a 3.2 GB qcow2 read out of /mnt/c.
+2. Nothing else is open. --resume, ./niosx add coverage, the tenant name check and
+   the teardown journal were all finished and verified on 2026-09-02.
 
 HARD-WON FACTS — do not relearn these (all verified against the live API)
 - NEVER set an SMBIOS serial. A made-up serial makes the appliance wait to be

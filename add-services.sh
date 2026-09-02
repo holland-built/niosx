@@ -29,6 +29,9 @@ esac
 
 TF=$HERE/terraform
 SEC=${NIOSX_SECRETS:-$TF/secrets.auto.tfvars}
+# One file, read by this script AND by Terraform: the override sets both.
+JSON=${NIOSX_HOSTS_JSON:-$TF/niosx_hosts.json}
+[ -z "${NIOSX_HOSTS_JSON:-}" ] || export TF_VAR_hosts_file="$NIOSX_HOSTS_JSON"
 CSP=${CSP_URL:-https://csp.infoblox.com}
 command -v tofu >/dev/null 2>&1 || { echo "!! missing required tool: tofu" >&2; exit 1; }
 
@@ -102,7 +105,7 @@ if [ -n "${HOSTID:-}" ]; then
   else echo "!! rename failed (HTTP $rc) — continuing; host keeps its ZTP name" >&2; fi
 fi
 
-python3 - "$TF/niosx_hosts.json" "$LABEL" "infra/pool/$POOL" "$SERVICES" <<'PY'
+python3 - "$JSON" "$LABEL" "infra/pool/$POOL" "$SERVICES" <<'PY'
 import json,sys
 path,label,pool,svcs = sys.argv[1:5]
 try:

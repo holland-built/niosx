@@ -70,7 +70,9 @@ done
 TF=$HERE/terraform
 SEC=${NIOSX_SECRETS:-$TF/secrets.auto.tfvars}
 CSP=${CSP_URL:-https://csp.infoblox.com}
-JSON=$TF/niosx_hosts.json
+# One file, read by this script AND by Terraform: the override sets both.
+JSON=${NIOSX_HOSTS_JSON:-$TF/niosx_hosts.json}
+[ -z "${NIOSX_HOSTS_JSON:-}" ] || export TF_VAR_hosts_file="$NIOSX_HOSTS_JSON"
 JOURNAL_DIR=${NIOSX_STATE_DIR:-$HOME/.config/niosx/teardown}
 JOURNAL=$JOURNAL_DIR/$VMID.json
 
@@ -140,8 +142,12 @@ csp_lookup() {  # $1 = filter expression; prints ERR on any failure
 import sys,json
 raw=sys.stdin.read().rsplit("\n",1)
 if len(raw)!=2 or raw[1].strip()!="200": print("ERR"); raise SystemExit
-try: r=json.loads(raw[0])["results"]
+try: d=json.loads(raw[0])
 except Exception: print("ERR"); raise SystemExit
+if not isinstance(d,dict): print("ERR"); raise SystemExit
+# no match at all comes back as a bare {}: zero hosts, not a failed query
+r=d.get("results") or []
+if not isinstance(r,list): print("ERR"); raise SystemExit
 h=r[0] if r else {}
 US="\x1f"
 print(US.join([str(len(r)), h.get("id") or "", h.get("display_name") or "",

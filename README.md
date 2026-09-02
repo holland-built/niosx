@@ -151,7 +151,8 @@ seeded and started again, because an appliance that boots without cloud-init
 never reads one later.
 
 It refuses to touch a VM that is neither carrying this tool's seed ISO nor
-named `<OWNER>-<vmid>`, and if it matched on the name alone it asks first.
+named `<OWNER>-<vmid>`, and if it matched on the name alone it asks you to
+confirm — so that case needs a terminal. There is deliberately no `--yes`.
 When a resume is not what you want:
 
 ```bash
@@ -249,6 +250,18 @@ Portal record.
 | `--services dns,dhcp` | start these; skips the prompt | prompts |
 | `--services none` | build the VM only | |
 | `--resume VMID` | finish a half-built VM instead of creating one | |
+
+### Environment overrides
+
+Normally untouched; they exist so the tests never read your real files.
+
+| Variable | Points at |
+|----------|-----------|
+| `NIOSX_CONFIG` | `config.env` |
+| `NIOSX_SECRETS` | `terraform/secrets.auto.tfvars` |
+| `NIOSX_TOKEN_FILE` | `~/.config/niosx/jointoken` |
+| `NIOSX_STATE_DIR` | `~/.config/niosx/teardown` |
+| `NIOSX_HOSTS_JSON` | `terraform/niosx_hosts.json` — also exports `TF_VAR_hosts_file`, so the scripts and Terraform can never read different files |
 
 ### VMID allocation — never reuse
 

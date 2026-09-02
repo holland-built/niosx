@@ -5,8 +5,12 @@
 # id at detail_hosts[].pool.pool_id; the provider normalises to the prefixed form
 # and errors with "inconsistent result after apply" if you pass the bare one.
 locals {
+  # Overridable so the scripts and the tests can point both halves at one file;
+  # empty (the default) means the usual <module>/niosx_hosts.json.
+  hosts_path = var.hosts_file != "" ? var.hosts_file : "${path.module}/niosx_hosts.json"
+
   # Absent on a fresh clone (it is gitignored, per-user) — treat as "no hosts".
-  niosx_hosts = fileexists("${path.module}/niosx_hosts.json") ? jsondecode(file("${path.module}/niosx_hosts.json")) : {}
+  niosx_hosts = fileexists(local.hosts_path) ? jsondecode(file(local.hosts_path)) : {}
 
   host_services = merge([
     for label, cfg in local.niosx_hosts : {
