@@ -58,4 +58,32 @@ case("a join token in place of the API key is caught",
      setup=lambda ws: open(ws.secrets, "w").write('infoblox_api_key = "wrong-secret.ibjt"\n'),
      rc=1, has=["JOIN TOKEN, not a CSP API key"], log_hasnt=["TOFU"])
 
+def already_running_dns(ws):
+    json.dump({"tester-250": {"pool_id": "infra/pool/p1", "services": ["dns"]}},
+              open(ws.hosts_json, "w"))
+
+
+def dns_and_dhcp(ws):
+    d = json.load(open(ws.hosts_json))
+    got = (d.get("tester-250") or {}).get("services")
+    return [] if got == ["dns", "dhcp"] else ["services are %r, wanted ['dns', 'dhcp']" % got]
+
+
+def still_just_dns(ws):
+    d = json.load(open(ws.hosts_json))
+    got = (d.get("tester-250") or {}).get("services")
+    return [] if got == ["dns"] else ["services are %r, wanted ['dns']" % got]
+
+
+# Replacing instead of merging would make this destroy the running dns service
+# on the next apply — the whole point of the subcommand being called "add".
+case("adding dhcp keeps the dns the host already runs",
+     script=ADD, args=("250", "tester-250", "dhcp"), env=REGISTERED,
+     setup=already_running_dns, after=dns_and_dhcp, rc=0,
+     has=["now runs dns,dhcp", "added dhcp"])
+case("re-adding a service it already runs changes nothing",
+     script=ADD, args=("250", "tester-250", "dns"), env=REGISTERED,
+     setup=already_running_dns, after=still_just_dns, rc=0,
+     has=["nothing new"])
+
 sys.exit(report())

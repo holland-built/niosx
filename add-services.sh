@@ -112,10 +112,17 @@ try:
     d = json.load(open(path))
 except Exception:
     d = {}
-d[label] = {"pool_id": pool, "services": [s for s in svcs.split(",") if s]}
+# ADD, not replace. Overwriting the list would make `add <host> dhcp` destroy
+# the dns service that host is already running on the next apply.
+have = (d.get(label) or {}).get("services") or []
+want = [s for s in svcs.split(",") if s]
+merged = have + [s for s in want if s not in have]
+d[label] = {"pool_id": pool, "services": merged}
 with open(path,"w") as f:
     json.dump(d,f,indent=2); f.write("\n")
-print(f">> {path} updated: {label} -> {svcs}")
+added = [s for s in want if s not in have]
+print(f">> {path}: {label} now runs {','.join(merged)}"
+      + (f" (added {','.join(added)})" if added else " (nothing new)"))
 PY
 
 echo ">> starting services on $LABEL: $SERVICES"

@@ -19,9 +19,19 @@ done
 code=${STUB_HTTP:-200}
 body='{"results":{"applications":["dfp","dns","dhcp","cdc","anycast","orpheus","msad","authn","ntp","discovery","dgw"]}}'
 HOSTID=jbeuiwrsmjsteobvhe3geolegjqtoobtmrsdqntemvsdqmzumu2tmytbgq3wizjweaqcaiba
+# which detail_hosts question is being asked matters: the name check filters on
+# display_name, the host lookup filters on mac_address, and list asks for all.
+filter=""
+for a in "$@"; do case "$a" in _filter=*) filter=$a ;; esac; done
+answer=0
+case "$url:$filter" in
+  *detail_hosts*display_name*) [ "${STUB_NAME_TAKEN:-0}" = 1 ] && answer=1 ;;
+  *detail_hosts*mac_address*)  [ "${STUB_HOST_REGISTERED:-0}" = 1 ] && answer=1 ;;
+  *detail_hosts*)              [ "${STUB_HOST_REGISTERED:-0}" = 1 ] && answer=1 ;;
+esac
 case "$url" in
   *detail_hosts*)
-    if [ "${STUB_NAME_TAKEN:-0}" = 1 ] || [ "${STUB_HOST_REGISTERED:-0}" = 1 ]; then
+    if [ "$answer" = 1 ]; then
       body='{"results":[{"id":"'$HOSTID'","display_name":"tester-250","ip_address":"10.0.0.9","composite_status":"online","mac_address":"aa:bb:cc:dd:ee:ff","pool":{"pool_id":"p1"},"configs":[{"service_type":"platform"},{"service_type":"appmgmt"}]}]}'
     else
       body='{}'                      # nothing matched — exactly what CSP sends

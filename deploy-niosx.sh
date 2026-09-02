@@ -40,6 +40,9 @@ Portal, rename it, and start the services you pick. ~5-10 min, no console.
   --services LIST   e.g. dns,dhcp   (omit = prompt with your tenant's list)
   --services none   build the VM only, start nothing
   --resume VMID     finish a VM this tool half-built (see README > Resume)
+  --no-wait         build and start it, then exit — do not wait ~5 min for it
+                    to register and for its services to come up. Track it with
+                    ./niosx check, finish it with ./niosx check <vmid> --finish
   -h, --help        this text
 
   VMID        default: next id from a never-reuse counter (delete 203 -> next 205)
@@ -82,7 +85,7 @@ CORES=${CORES:-3}                                       # Infoblox floor = 3 vCP
 DISK=${DISK:-64G}                                       # Infoblox floor = 64 GB (thin)
 
 # ---- flags (before positionals) ----
-SERVICES=""; OPT_VMID=""; OPT_NAME=""; OPT_TOKEN=""; RESUME=""
+SERVICES=""; OPT_VMID=""; OPT_NAME=""; OPT_TOKEN=""; RESUME=""; NOWAIT=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -103,6 +106,7 @@ while [ $# -gt 0 ]; do
       if [ $# -ge 2 ]; then case "$2" in [0-9]*) OPT_VMID=$2; shift ;; esac; fi
       shift ;;
     --resume=*) RESUME=1; OPT_VMID=${1#*=}; shift ;;
+    --no-wait|--nowait|--detach) NOWAIT=1; shift ;;
     -h|--help)    usage; exit 0 ;;
     --)           shift; while [ $# -gt 0 ]; do ARGS+=("$1"); shift; done ;;
     -*)           echo "!! unknown option: $1  (try --help)" >&2; exit 1 ;;
@@ -161,6 +165,7 @@ CSP=${CSP_URL:-https://csp.infoblox.com}
 # Fallback only, used when the API is unreachable. Snapshot of
 # /api/infra/v1/applications on 2026-09-02 — the live fetch is authoritative.
 CACHED_APPS="dfp,dns,dhcp,cdc,anycast,orpheus,msad,authn,ntp,discovery,dgw"
+PENDING_DIR=${NIOSX_PENDING_DIR:-$HOME/.config/niosx/pending}
 
 csp_key() {                 # prints the CSP API key, or explains why it cannot
   if [ ! -f "$SEC" ]; then
@@ -487,7 +492,22 @@ EOF
     echo ">> 5/6  VM $VMID already running — skipped"
   fi
 
-  if [ "$SERVICES" != "none" ]; then
+  if [ -n "$NOWAIT" ]; then
+    # Leave a note to ourselves so `./niosx check` can pick this up later,
+    # instead of the caller having to remember what was still in flight.
+    mkdir -p "$PENDING_DIR"; chmod 700 "$PENDING_DIR" 2>/dev/null || true
+    python3 -c '
+import json, sys
+path, vmid, name, svcs, pve = sys.argv[1:6]
+json.dump({"vmid": vmid, "name": name,
+           "services": "" if svcs == "none" else svcs, "pve": pve},
+          open(path, "w"), indent=2)' \
+      "$PENDING_DIR/$VMID.json" "$VMID" "$NAME" "$SERVICES" "$PVE"
+    echo ">> 6/6  not waiting — it registers on its own in ~2 min"
+    echo ">> DONE. $NAME is building. Services still to start: ${SERVICES}"
+    echo "   Check on it: ./niosx check"
+    echo "   Finish it:   ./niosx check $VMID --finish"
+  elif [ "$SERVICES" != "none" ]; then
     echo ">> 6/6  Adding services once it registers"
     "$HERE/add-services.sh" "$VMID" "$NAME" "$SERVICES"
     echo ">> DONE. $NAME deployed and running: $SERVICES"
