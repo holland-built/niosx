@@ -26,6 +26,7 @@ class Workspace:
         self.secrets = os.path.join(self.dir, "secrets.auto.tfvars")
         open(self.secrets, "w").write('infoblox_api_key = "FAKE-API-KEY-for-tests"\n')
         self.hosts_json = os.path.join(self.dir, "niosx_hosts.json")
+        self.pending_dir = os.path.join(self.dir, "pending")
         self.log = os.path.join(self.dir, "stub.log")
         self.capture = os.path.join(self.dir, "remote.txt")
 
@@ -37,6 +38,7 @@ class Workspace:
         e["NIOSX_SECRETS"] = self.secrets
         e["NIOSX_STATE_DIR"] = os.path.join(self.dir, "teardown")
         e["NIOSX_HOSTS_JSON"] = self.hosts_json
+        e["NIOSX_PENDING_DIR"] = self.pending_dir
         e["STUB_LOG"] = self.log
         e["STUB_CAPTURE"] = self.capture
         e["TERM"] = "dumb"

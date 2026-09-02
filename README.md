@@ -106,6 +106,8 @@ Everything runs through one command — `./niosx <subcommand>`:
 | `./niosx add <vmid> <name> <services>` | add services to an existing host |
 | `./niosx teardown <vmid>` | destroy a node (start with `--dry-run`) |
 | `./niosx list` | your VMs vs the Portal vs Terraform |
+| `./niosx deploy --no-wait` | build and start it, come back later |
+| `./niosx check` | did the nodes you did not wait for register? finish them |
 | `./niosx deploy --resume <vmid>` | finish a node whose deploy died half way |
 | `./niosx test` | run the test suite (touches no host, no tenant) |
 
@@ -128,6 +130,40 @@ services [dns,dhcp]:
 
 Registration takes ~2–3 min, services ~3–5 min more; the script waits up to 30.
 **Success:** the host appears in **Infrastructure > Hosts** as `<you>-<vmid>`.
+
+## Build now, finish later
+
+A full deploy takes 5–10 minutes, most of it waiting: ~2 min for the appliance
+to register, then a few more for each service to come up. `--no-wait` returns
+as soon as the VM is running:
+
+```bash
+./niosx deploy --services dns --no-wait     # ~2 min, then you get your shell back
+./niosx deploy --services dns --no-wait     # queue up as many as you like
+./niosx deploy --services dns --no-wait
+```
+
+Each one leaves a note in `~/.config/niosx/pending/<vmid>.json`. Later:
+
+```bash
+./niosx check                 # what happened to them?
+./niosx check --finish        # start the services on any that have registered
+./niosx check 207 --finish    # just that one
+```
+
+```
+  207   sholland-207     vm:running  portal:sholland-207 192.168.100.161   services:dns,dhcp
+        ready. Finish with: ./niosx check 207 --finish
+```
+
+`check` is read-only without `--finish`. A node drops off the list once its
+services are running, and a node whose VM has gone is called out rather than
+retried forever. Nothing is queued or daemonised — the record is a note, and
+`check` compares it against what Proxmox, the Portal and Terraform say now.
+
+**One at a time when you finish them.** `--finish` runs Terraform, and the
+state is a local file — two applies at once will fight. Building with
+`--no-wait` in parallel is fine; that part touches no state.
 
 ## Resume a half-built node
 
@@ -250,6 +286,7 @@ Portal record.
 | `--services dns,dhcp` | start these; skips the prompt | prompts |
 | `--services none` | build the VM only | |
 | `--resume VMID` | finish a half-built VM instead of creating one | |
+| `--no-wait` | return once the VM is running; finish with `./niosx check` | waits |
 
 ### Environment overrides
 
@@ -261,6 +298,7 @@ Normally untouched; they exist so the tests never read your real files.
 | `NIOSX_SECRETS` | `terraform/secrets.auto.tfvars` |
 | `NIOSX_TOKEN_FILE` | `~/.config/niosx/jointoken` |
 | `NIOSX_STATE_DIR` | `~/.config/niosx/teardown` |
+| `NIOSX_PENDING_DIR` | `~/.config/niosx/pending` — the `--no-wait` notes |
 | `NIOSX_HOSTS_JSON` | `terraform/niosx_hosts.json` — also exports `TF_VAR_hosts_file`, so the scripts and Terraform can never read different files |
 
 ### VMID allocation — never reuse

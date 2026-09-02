@@ -10,6 +10,8 @@ Another removes all of it. Aimed at ~700 sales engineers sharing one CSP tenant.
 
 ```bash
 ./niosx deploy                     # prompts, then does everything
+./niosx deploy --services dns --no-wait   # build it, do not wait ~5 min
+./niosx check [vmid] [--finish]    # ...then pick those up later
 ./niosx deploy --resume <vmid>     # finish a half-built node
 ./niosx add <vmid> <name> <svcs>   # add services to an existing host
 ./niosx teardown <vmid> --dry-run  # see what would go
@@ -27,7 +29,8 @@ Another removes all of it. Aimed at ~700 sales engineers sharing one CSP tenant.
 | Never-reuse VMIDs | counter at 206 after 201/202/204/205/206 retired |
 | **Interactive prompts + numbered menu** | 39 assertions in `tests/`, driven through a real pty |
 | **`--resume`** | VM 205, live: deploy failed at disk import, resume imported the disk, built and attached the seed, started it, and it registered in ~2 min; torn down clean afterwards |
-| **`./niosx add`** | 7 assertions — register, rename, record, apply |
+| **`./niosx add`** | live on VMs 207/208/209: added dhcp to hosts already running dns, `1 added, 0 changed, 0 destroyed` each time |
+| **`--no-wait` / `./niosx check`** | check run live against 207 — read Proxmox, the Portal and Terraform state, saw both services up, cleared its own record |
 
 Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 
@@ -76,6 +79,7 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 | The teardown journal was written and never read | reported on the next teardown, and by `./niosx list` |
 | A failed deploy left a VM you could only delete | `./niosx deploy --resume <vmid>` |
 | The host name was spliced into JSON for the CSP rename | built with `json.dumps` |
+| `./niosx add <host> dhcp` REPLACED the service list, so it would have destroyed the dns that host was already running | the list is merged; re-adding an existing service is a no-op |
 | Teardown refused to run on a host that was not in the Portal, calling it a failed lookup | a bare `{}` is read as zero matches |
 | `./niosx list` always showed `-` for services, whatever was running | read from `/api/infra/v1/services`, filtered server-side |
 | The image basename picked up a trailing `_` and shipped a duplicate 3.2 GB file | `basename`'s newline is stripped before sanitising |
@@ -100,6 +104,7 @@ Currently live: `sholland-203` running DNS + DHCP (`./niosx list` for its IP).
 | `terraform/niosx_hosts.json` | which hosts/services you manage (gitignored, per-user) |
 | `/etc/niosx/last_vmid` (Proxmox) | never-reuse VMID counter |
 | `~/.config/niosx/teardown/<vmid>.json` | journal of a teardown in progress |
+| `~/.config/niosx/pending/<vmid>.json` | a node built with `--no-wait`, not yet finished |
 | `lib.sh` | shared validators (names, VMIDs, OWNER, CRLF) |
 | `tests/` | stubbed suite; `./niosx test` |
 | `NIOSX_HOSTS_JSON` | points this script *and* Terraform (`TF_VAR_hosts_file`) at one hosts file — used by the tests |

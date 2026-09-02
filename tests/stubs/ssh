@@ -11,8 +11,18 @@ case "$args" in
   *last_vmid*"printf"*)   log "ALLOCATE"; echo "${STUB_NEXT_VMID:-205}"; exit 0 ;;
   *"qm config"*)
       log "QM-CONFIG"
-      [ -n "${STUB_QM_CONFIG:-}" ] || exit 1
-      printf '%s\n' "$STUB_QM_CONFIG"; exit 0 ;;
+      cfg=${STUB_QM_CONFIG:-}
+      # A real deploy sees no VM at preflight and a VM afterwards. With
+      # STUB_QM_CONFIG_AFTER_CREATE the stub does the same, switching once the
+      # create script has run.
+      if [ -n "${STUB_QM_CONFIG_AFTER_CREATE:-}" ]; then
+        if grep -q REMOTE-SCRIPT "${STUB_LOG:-/dev/null}" 2>/dev/null
+          then cfg=$STUB_QM_CONFIG_AFTER_CREATE
+          else cfg=""
+        fi
+      fi
+      [ -n "$cfg" ] || exit 1
+      printf '%s\n' "$cfg"; exit 0 ;;
   *"qm status"*)          log "QM-STATUS"; echo "status: ${STUB_QM_STATUS:-stopped}"; exit 0 ;;
 esac
 
