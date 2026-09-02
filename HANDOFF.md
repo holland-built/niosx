@@ -21,10 +21,10 @@ Another removes all of it. Aimed at ~700 sales engineers sharing one CSP tenant.
 
 | Path | Evidence |
 |------|----------|
-| Deploy → register → rename → services | VM 203 (`dns,dhcp`), VM 201 (`dns,ntp`) |
-| Teardown | VM 202 and VM 201, both fully removed from Proxmox + Portal |
-| Blast-radius isolation | tearing down one host left the other's VM, services, state and Portal record untouched |
-| Never-reuse VMIDs | counter at 204 after 201/202/204 retired |
+| Deploy → register → rename → services | VM 206 (`dns`) on the current code — registered, renamed from its ZTP name, recorded, service created in 2m27s. Earlier: VM 203 (`dns,dhcp`), VM 201 (`dns,ntp`) |
+| Teardown, including service removal | VM 206 on the current code: `Resources: 0 added, 0 changed, 1 destroyed`. Earlier: VM 202 and VM 201 |
+| Blast-radius isolation | tearing 206 down destroyed exactly its own service and left 203's two, its VM, its Portal record and its state untouched |
+| Never-reuse VMIDs | counter at 206 after 201/202/204/205/206 retired |
 | **Interactive prompts + numbered menu** | 39 assertions in `tests/`, driven through a real pty |
 | **`--resume`** | VM 205, live: deploy failed at disk import, resume imported the disk, built and attached the seed, started it, and it registered in ~2 min; torn down clean afterwards |
 | **`./niosx add`** | 7 assertions — register, rename, record, apply |

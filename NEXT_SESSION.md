@@ -22,12 +22,15 @@ DONE AND VERIFIED LIVE
 - Full lifecycle twice: VM 202 (dns,dhcp) and VM 201 (dns,ntp), both built then
   torn down completely, with a second host provably untouched each time.
 - One host is currently live (see `./niosx list`) running DNS + DHCP. Leave it up.
-- Next VMID is 206 (never-reuse counter at /etc/niosx/last_vmid on the Proxmox host).
+- Next VMID is 207 (never-reuse counter at /etc/niosx/last_vmid on the Proxmox host).
 - 2026-09-02: interactive path driven through a real pty at last (48 assertions in
   tests/), which turned up a command injection through the Name prompt — a name of
   x;reboot ran `reboot` as root on the Proxmox host. Fixed, plus --resume, live
   service validation, tenant-wide name check, enforced OWNER, and the teardown
   journal is finally read. See "Fixed on 2026-09-02" in HANDOFF.md.
+- 2026-09-02: the whole lifecycle re-verified on the CURRENT code with VM 206 —
+  deploy, register, rename off the ZTP name, tofu apply (dns up in 2m27s), then
+  teardown, which destroyed exactly one service and left host 203's two alone.
 - 2026-09-02: --resume proven on real hardware. VM 205 was deliberately failed at
   the disk-import step, resumed, registered in ~2 min, then torn down clean; the
   live host 203 was untouched throughout. VMID counter is now 205, next id 206.
