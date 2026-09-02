@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Repeatable NIOS-X (Infoblox On-Prem) deploy to Proxmox — fully hands-off.
-# Ships qcow2 Mac -> Proxmox, builds a thin VM at Infoblox min spec, sets the
-# SMBIOS serial (Device-UI identity), and — if a join token is given — builds a
-# cloud-init seed so the appliance self-registers to the Infoblox Portal (CSP)
-# on first boot. No console login needed.
+# Ships qcow2 Mac -> Proxmox, builds a thin VM at Infoblox min spec and — if a
+# join token is given — builds a cloud-init seed so the appliance self-registers
+# to the Infoblox Portal (CSP) on first boot. No console login needed.
 #
 # Usage:
 #   ./deploy-niosx.sh [VMID] [NAME] [JOINTOKEN]
@@ -48,6 +47,12 @@ JOINTOKEN=${3:-$(cat "$TOKEN_FILE" 2>/dev/null || true)}       # arg3, else stor
 REMOTE=/var/lib/vz/template/qcow
 BASENAME=$(basename "$IMG")
 
+# NOTE: do NOT set an SMBIOS serial. Infoblox uses serial numbers for ZTP of
+# *purchased hardware*; a made-up serial makes the appliance wait to be claimed
+# as hardware and it never uses the join token — it won't even dial CSP.
+# Verified: identical VM registered in ~100s with no serial, and never
+# registered with serial=NIOSX-<vmid>. Removing the serial fixed it immediately.
+
 # ---- allocate VMID: never-reuse high-water mark on the Proxmox host ----
 # (single-quoted remote script; $(), $(()) etc. evaluate ON the host)
 if [ -z "$VMID" ]; then
@@ -65,13 +70,12 @@ if [ -z "$VMID" ]; then
   echo ">> allocated VMID $VMID (high-water mark — freed ids never reused)"
 fi
 NAME=${NAME:-nios-x-$VMID}
-SER_B64=$(printf 'NIOSX-%s' "$VMID" | base64)           # SMBIOS serial, base64 for qm
 
 echo ">> 1/5  Ship image Mac -> Proxmox"
 ssh "$PVE" "mkdir -p $REMOTE"
 rsync -aP "$IMG" "$PVE:$REMOTE/$BASENAME"
 
-echo ">> 2/5  Build VM $VMID (serial=NIOSX-$VMID)"
+echo ">> 2/5  Build VM $VMID"
 ssh "$PVE" bash -s <<EOF
 set -euo pipefail
 if qm status $VMID >/dev/null 2>&1; then
@@ -81,8 +85,7 @@ qm create $VMID --name $NAME --machine q35 --ostype l26 \
   --memory $RAM --balloon $RAM --cores $CORES \
   --scsihw virtio-scsi-single \
   --net0 virtio,bridge=$BRIDGE \
-  --serial0 socket --vga serial0 \
-  --smbios1 serial=$SER_B64,base64=1
+  --serial0 socket --vga serial0
 echo ">> 3/5  Import disk (thin zvol on $POOL)"
 qm importdisk $VMID "$REMOTE/$BASENAME" $POOL
 qm set $VMID --scsi0 $POOL:vm-$VMID-disk-0,discard=on,ssd=1

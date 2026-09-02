@@ -1,9 +1,9 @@
 # NIOS-X On-Prem on Proxmox — repeatable, hands-off deploy
 
 Ships the Infoblox NIOS-X On-Prem qcow2 to a Proxmox host, builds a **thin** VM at
-Infoblox minimum spec, sets the SMBIOS serial, and — given a join token — injects
-it via **cloud-init** so the appliance **self-registers to the Infoblox Portal
-(CSP)** on first boot. No console login required.
+Infoblox minimum spec, and — given a join token — injects it via **cloud-init** so
+the appliance **self-registers to the Infoblox Portal (CSP)** on first boot.
+No console login required.
 
 ## Setup (once)
 
@@ -58,7 +58,6 @@ Adopting the host + starting DNS/DHCP lives in [`terraform/`](terraform/README.m
 
 | Step | What happens |
 |------|--------------|
-| SMBIOS serial | set to `NIOSX-<vmid>` at build (base64-encoded for `qm`) — Device-UI identity |
 | Disk | 64 GB **thin** volume (qcow virtual ~58.6 G, real ~2.4 G at first boot) |
 | Join (cloud-init) | seed ISO labelled `cidata` with `user-data` → `host_setup: jointoken:` |
 | Network | **DHCP** on the configured bridge; appliance leases automatically |
@@ -81,17 +80,37 @@ Adopting the host + starting DNS/DHCP lives in [`terraform/`](terraform/README.m
 | Leased IP | on the Proxmox host, ping-sweep the subnet then `ip neigh \| grep -i <vm-mac>` |
 | Device UI up | `https://<leased-ip>` returns 200 |
 
-## Console access (if you must)
+## Console access
 
-The only console is serial (`--vga serial0`). Login is **`admin`**, initial password
-= **last 8 chars of the appliance's `ophid`** — **not** root. From the Proxmox host
-you can read the console without the Proxmox UI:
+The only console is serial (`--vga serial0`). Login is **`admin`**; the initial
+password is the **last characters of the appliance's serial number**.
+
+**These VMs deliberately have no SMBIOS serial** (see the warning below), so no
+console password can be derived and the console is effectively unavailable. That
+is an accepted trade-off: registration matters more, and the supported management
+path is the Infoblox Portal / API, not the console.
+
+You can still read the console output from the Proxmox host:
 
 ```bash
 { printf "\n"; sleep 1; } | socat -T3 - UNIX-CONNECT:/var/run/qemu-server/<vmid>.serial0
 ```
 
-You shouldn't need this — the cloud-init join is the supported path.
+## ⚠️ Do not set an SMBIOS serial
+
+Infoblox uses serial numbers to zero-touch-provision **purchased hardware**. If you
+give a VM a made-up serial, the appliance waits to be claimed as hardware and
+**never uses the join token — it will not even dial CSP**.
+
+Observed directly on identical VMs:
+
+| SMBIOS serial | Result |
+|---------------|--------|
+| none | registered to CSP in **~100 seconds** |
+| `NIOSX-202` (made up) | **no outbound 443 at all**, never registered |
+| serial removed, rebooted | dialled CSP immediately, pulled ~1 GB of services |
+
+The script therefore sets **no** serial. Don't add one.
 
 ## Static IP instead of DHCP
 
@@ -125,6 +144,9 @@ and grows on demand.
 
 ## Notes
 
-- A host that has already registered keeps its identity; changing its SMBIOS serial
-  afterwards re-identifies it in CSP. Set the serial at build time (this script does).
+- Hosts register under an auto-generated ZTP name, e.g.
+  `ZTP_<join-token-name>_<digits>` — not the Proxmox VM name. Find yours in the
+  Portal, or via `GET /api/infra/v1/detail_hosts` filtered on its IP.
+- A destroyed VM leaves its CSP host record behind. Delete it with
+  `DELETE /api/infra/v1/hosts/<id>` or it lingers as a degraded orphan.
 - The qcow2's virtual size is ~58.6 GB; the script grows it to 64 GB, still sparse.

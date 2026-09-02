@@ -1,9 +1,12 @@
 # Adopt each already-joined host by display_name. retry_if_not_found waits for the
 # appliance to finish registering (handy right after the deploy script boots it).
 data "bloxone_infra_hosts" "niosx" {
-  for_each           = var.niosx_hosts
-  filters            = { display_name = each.key }
-  retry_if_not_found = true
+  for_each = var.niosx_hosts
+  filters  = { display_name = each.key }
+  # true makes a miss retry for the full read timeout (20m) and hides real
+  # errors. Keep false so failures surface fast; flip on only if you apply
+  # immediately after a deploy and want to wait for registration to land.
+  retry_if_not_found = false
 }
 
 # Flatten { host => {services=[...]} } into { "host-svc" => {host, service} }.
