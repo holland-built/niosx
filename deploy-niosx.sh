@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Repeatable NIOS-X (Infoblox On-Prem) deploy to Proxmox — fully hands-off.
-# Ships qcow2 Mac -> Proxmox, builds a thin VM at Infoblox min spec and — if a
+# Ships qcow2 local -> Proxmox, builds a thin VM at Infoblox min spec and — if a
 # join token is given — builds a cloud-init seed so the appliance self-registers
 # to the Infoblox Portal (CSP) on first boot. No console login needed.
 #
@@ -30,7 +30,31 @@
 set -euo pipefail
 
 # --help must work on a fresh clone, before config.env exists
-case "${1:-}" in -h|--help) sed -n '2,29p' "$0"; exit 0 ;; esac
+usage() {
+  cat <<'HELPEOF'
+Build a NIOS-X On-Prem VM on Proxmox, let it self-register to the Infoblox
+Portal, rename it, and start the services you pick. ~5-10 min, no console.
+
+  ./deploy-niosx.sh [--services LIST] [VMID] [NAME] [JOINTOKEN]
+
+  --services LIST   e.g. dns,dhcp   (omit = prompt with your tenant's list)
+  --services none   build the VM only, start nothing
+  -h, --help        this text
+
+  VMID        default: next id from a never-reuse counter (delete 203 -> next 205)
+  NAME        default: <OWNER>-<VMID>, e.g. sholland-203
+  JOINTOKEN   default: the stored token file
+
+Setup (see README)
+  config.env                      OWNER, PVE, IMG, POOL, BRIDGE
+  ~/.config/niosx/jointoken       join token, ends .ibjt
+  terraform/secrets.auto.tfvars   CSP API key (a different secret)
+
+Needs DHCP on the bridge and outbound 443 to csp.infoblox.com.
+HELPEOF
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 # ---- environment: copy config.env.example -> config.env and fill it in ----
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -53,7 +77,7 @@ CORES=${CORES:-3}                                       # Infoblox floor = 3 vCP
 DISK=${DISK:-64G}                                       # Infoblox floor = 64 GB (thin)
 
 # ---- flags (before positionals) ----
-SERVICES=""
+SERVICES=""; OPT_VMID=""; OPT_NAME=""; OPT_TOKEN=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,7 +86,13 @@ while [ $# -gt 0 ]; do
       case "$2" in -*) echo "!! --services needs a value, got '$2'" >&2; exit 1 ;; esac
       SERVICES=$2; shift 2 ;;
     --services=*) SERVICES=${1#*=}; shift ;;
-    -h|--help)    sed -n '2,29p' "$0"; exit 0 ;;
+    --vmid)  [ $# -ge 2 ] || { echo "!! --vmid needs a number" >&2; exit 1; }; OPT_VMID=$2; shift 2 ;;
+    --vmid=*) OPT_VMID=${1#*=}; shift ;;
+    --name)  [ $# -ge 2 ] || { echo "!! --name needs a value" >&2; exit 1; }; OPT_NAME=$2; shift 2 ;;
+    --name=*) OPT_NAME=${1#*=}; shift ;;
+    --token) [ $# -ge 2 ] || { echo "!! --token needs a value" >&2; exit 1; }; OPT_TOKEN=$2; shift 2 ;;
+    --token=*) OPT_TOKEN=${1#*=}; shift ;;
+    -h|--help)    usage; exit 0 ;;
     --)           shift; while [ $# -gt 0 ]; do ARGS+=("$1"); shift; done ;;
     -*)           echo "!! unknown option: $1  (try --help)" >&2; exit 1 ;;
     *)            ARGS+=("$1"); shift ;;
@@ -76,10 +106,26 @@ for t in ssh rsync curl python3; do
 done
 [ -f "$IMG" ] || { echo "!! qcow2 not found: $IMG   (set IMG in config.env)" >&2; exit 1; }
 
-VMID=${1:-}                                             # arg1 = explicit VMID; empty => auto-allocate (never reuse)
-NAME=${2:-}                                             # arg2; defaults to nios-x-<vmid> once VMID resolved
+VMID=${OPT_VMID:-${1:-}}                                # --vmid or arg1; empty => auto-allocate (never reuse)
+NAME=${OPT_NAME:-${2:-}}                                # --name or arg2; default <OWNER>-<VMID>
 TOKEN_FILE=${NIOSX_TOKEN_FILE:-$HOME/.config/niosx/jointoken}  # reusable token, outside git (mode 600)
-JOINTOKEN=${3:-$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)}   # arg3, else stored token (CR/LF stripped)
+# token precedence: --token > arg3 > JOINTOKEN in config.env > token file
+JOINTOKEN=${OPT_TOKEN:-${3:-${JOINTOKEN:-$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)}}}
+JOINTOKEN=$(printf '%s' "$JOINTOKEN" | tr -d '\r\n')
+
+# ask for the things we were not given (interactive only)
+if [ -z "$VMID" ] && [ -t 0 ]; then
+  printf 'VMID  [Enter = next free id]: '; read -r VMID || VMID=""
+fi
+if [ -n "$VMID" ]; then
+  case "$VMID" in
+    ''|*[!0-9]*) echo "!! VMID must be a number (you gave: '$VMID')" >&2
+                 echo "   Leave it blank to get the next free id." >&2; exit 1 ;;
+  esac
+fi
+if [ -z "$NAME" ] && [ -t 0 ]; then
+  printf 'Name  [Enter = %s-%s]: ' "$OWNER" "${VMID:-<next>}"; read -r NAME || NAME=""
+fi
 
 REMOTE=/var/lib/vz/template/qcow
 BASENAME=$(basename "$IMG")
@@ -106,13 +152,28 @@ if [ -z "$SERVICES" ] && [ -t 0 ]; then
     echo "   (snapshot 2026-09-02; may be out of date)"
   fi
   echo
-  echo "Services available in this tenant:"
-  echo "   $APPS"
   echo
-  echo "Which should run on the new host?  (comma-separated, or 'none')"
-  printf 'services [dns,dhcp]: '
+  echo "Services available in this tenant:"
+  n=1
+  for a in $(printf '%s' "$APPS" | tr ',' ' '); do printf '   %2d) %s\n' "$n" "$a"; n=$((n + 1)); done
+  echo
+  echo "Pick numbers or names, comma-separated. Enter = dns,dhcp. 'none' = skip."
+  printf 'services: '
   read -r choice || choice=""
-  SERVICES=${choice:-dns,dhcp}
+  choice=${choice:-dns,dhcp}
+  if [ "$choice" = "none" ]; then
+    SERVICES=none
+  else
+    SERVICES=""
+    for tok in $(printf '%s' "$choice" | tr ',' ' '); do
+      case "$tok" in
+        ''|*[!0-9]*) pick=$tok ;;
+        *)           pick=$(printf '%s' "$APPS" | tr ',' '\n' | sed -n "${tok}p") ;;
+      esac
+      [ -n "$pick" ] || { echo "!! no service numbered $tok" >&2; exit 1; }
+      SERVICES="${SERVICES:+$SERVICES,}$pick"
+    done
+  fi
 fi
 SERVICES=${SERVICES:-none}
 SERVICES=$(printf '%s' "$SERVICES" | tr -d '[:space:]')
@@ -221,6 +282,9 @@ instance-id: niosx-$VMID-\$(date +%s)
 local-hostname: $NAME
 YAML
 genisoimage -quiet -output /var/lib/vz/template/iso/seed-niosx-$VMID.iso -volid cidata -joliet -rock user-data meta-data
+# the seed carries the join token: keep it unreadable and leave no cleartext copy
+chmod 600 /var/lib/vz/template/iso/seed-niosx-$VMID.iso
+cd /; rm -rf "\$D"
 qm set $VMID --ide2 local:iso/seed-niosx-$VMID.iso,media=cdrom
 echo ">> 5/6  Start $VMID (leases DHCP, then registers to CSP)"
 qm start $VMID

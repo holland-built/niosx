@@ -67,14 +67,14 @@ try: d=json.load(sys.stdin)
 except Exception: print("\t"); raise SystemExit
 r=(d.get("results") or [])
 h=r[0] if r else {}
-print("%s\t%s" % (h.get("id") or "", ((h.get("pool") or {}).get("pool_id") or "")))
-' 2>/dev/null || printf '\t'
+print("%s\x1f%s" % (h.get("id") or "", ((h.get("pool") or {}).get("pool_id") or "")))
+' 2>/dev/null || printf '\037'
 }
 
 echo ">> waiting for VM $VMID (mac $MAC) to register in CSP (up to 30 min)..."
 HOSTID=""; POOL=""
 for i in $(seq 1 60); do
-  IFS=$(printf '\t') read -r HOSTID POOL <<EOF2
+  IFS=$(printf '\037') read -r HOSTID POOL <<EOF2
 $(lookup)
 EOF2
   [ -n "${POOL:-}" ] && break

@@ -138,10 +138,21 @@ Use your own API key, never a shared one, so actions stay attributable.
 ## Teardown
 
 ```bash
-cd terraform && tofu destroy          # stop/remove the services you started
-ssh root@<pve> 'qm stop <vmid>; qm destroy <vmid> --purge'
-# then remove the host in Portal > Infrastructure > Hosts
+./teardown-niosx.sh <vmid>              # asks you to type the host name
+./teardown-niosx.sh <vmid> --dry-run    # show what would go, change nothing
 ```
+
+Removes, in this order: its services (via a Terraform plan that is checked to
+touch **only** that host), the Portal host record, the Proxmox VM and disk, and
+the seed ISO holding your join token. The VMID is retired and never reused.
+
+Start with `--dry-run` — it prints exactly what will be destroyed. There is
+deliberately **no `--all`** and no `--yes`; for scripting, `--confirm "<host
+name>"` requires the exact name.
+
+Do **not** use `tofu destroy` to remove one host: it destroys the services of
+*every* host in your state. And do not `qm destroy` first — that orphans the
+Portal record.
 
 <details>
 <summary><b>Reference — flags, VMID allocation, specs, console, static IP</b></summary>
