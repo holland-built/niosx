@@ -1,0 +1,5 @@
+# Keep LF endings everywhere — CRLF breaks bash shebangs, heredocs and sourced
+# config on WSL ("bash\r: bad interpreter"), and a CR in the join token makes
+# registration fail silently.
+* text=auto eol=lf
+*.qcow2 binary

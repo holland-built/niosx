@@ -1,62 +1,42 @@
-# NIOS-X CSP config — Terraform (Universal DDI / bloxone provider)
+# terraform/ — starts services on registered NIOS-X hosts
 
-Adopts the NIOS-X hosts that self-joined via the deploy script's cloud-init token
-and **starts services** (DNS/DHCP) on them. Terraform does **not** create the host
-— the appliance joins itself; this just looks it up by `display_name` and turns
-services on, as declarative state you can `plan`/`destroy`.
+Normally you don't run this directly: `../deploy-niosx.sh` and
+`../wire-services.sh` drive it for you.
 
-## One-time setup
+It starts the services listed in `niosx_hosts.json` (gitignored, per-user,
+written by `wire-services.sh`):
 
-```bash
-cd terraform
-cp secrets.auto.tfvars.example secrets.auto.tfvars   # gitignored
-# edit secrets.auto.tfvars -> paste CSP API key (Portal > your user > API Keys)
-tofu init
-```
-
-## Use
-
-```bash
-tofu plan
-tofu apply        # starts DNS+DHCP on nios-x-201 (see variables.tf default)
-terraform output       # host id/ophid/serial/ip + started services
-```
-
-## Add a host
-
-Edit `niosx_hosts` (default in `variables.tf`, or copy `hosts.auto.tfvars.example`
-→ `hosts.auto.tfvars`):
-
-```hcl
-niosx_hosts = {
-  "nios-x-201" = { services = ["dns", "dhcp"] }
-  "nios-x-202" = { services = ["dns"] }
+```json
+{
+  "<owner>-<vmid>": {
+    "pool_id": "infra/pool/<id>",
+    "services": ["dns", "dhcp"]
+  }
 }
 ```
 
-`tofu apply` again. Remove a host from the map + apply = services stopped/removed.
+`pool_id` **must** keep the `infra/pool/` prefix. The API returns a bare id at
+`detail_hosts[].pool.pool_id`; the provider normalises to the prefixed form and
+fails with *"inconsistent result after apply"* if you pass the bare one.
 
-## Secrets — what's where
+## Manual use
 
-| Secret | Used by | Location | In git? |
-|--------|---------|----------|---------|
-| CSP **API key** | Terraform → CSP | `secrets.auto.tfvars` | ❌ gitignored |
-| **Join token** | appliance first boot | `~/.config/niosx/jointoken` (deploy script) | ❌ outside repo |
-
-Terraform needs the **API key**, not the join token — different secrets. Keep the
-API key in `secrets.auto.tfvars` (or `export TF_VAR_infoblox_api_key=...`). It is
-**not** hardcoded in any `.tf` so a leaked repo doesn't leak your CSP tenant.
-
-## Resources used
-
-| Object | Terraform | Notes |
-|--------|-----------|-------|
-| Host lookup | `data.bloxone_infra_hosts` | filter `display_name`; `retry_if_not_found` waits for join |
-| Service | `bloxone_infra_service` | `service_type` dns/dhcp/…, `desired_state = "start"` |
-
-## Full flow
-
+```bash
+cp secrets.auto.tfvars.example secrets.auto.tfvars   # add your CSP API key
+tofu init
+$EDITOR niosx_hosts.json
+tofu plan && tofu apply
 ```
-./deploy-niosx.sh            # build VM + cloud-init join (host appears in CSP)
-cd terraform && tofu apply   # start DNS/DHCP on it
-```
+
+Remove a host or service from the JSON and apply = those services are stopped
+and removed. `tofu destroy` removes everything **you** started (state is local
+to your machine, so it never touches anyone else's hosts).
+
+## Notes
+
+- Requires OpenTofu (`tofu`). The lock file pins `registry.opentofu.org`.
+- Service names are `<label>-<service>`, e.g. `sholland-202-dns` — the label is
+  the JSON key. Keep it unique; the CSP tenant is shared.
+- If an apply errors, the resource may be left **tainted** even though it was
+  created. `tofu untaint '<address>'` rather than letting a re-apply destroy and
+  recreate a live service.

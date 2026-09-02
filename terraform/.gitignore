@@ -14,3 +14,6 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Per-user host registry written by wire-services.sh — contains YOUR pool ids
+niosx_hosts.json

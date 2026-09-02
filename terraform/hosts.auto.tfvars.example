@@ -1,7 +1,0 @@
-# Optional: override which hosts/services Terraform manages.
-# Copy to hosts.auto.tfvars (committed is fine — no secrets here) and edit.
-niosx_hosts = {
-  "nios-x-201" = { services = ["dns", "dhcp"] }
-  # "nios-x-202" = { services = ["dns"] }
-  # "nios-x-203" = { services = ["dhcp"] }
-}

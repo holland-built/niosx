@@ -1,35 +1,31 @@
-# Adopt each already-joined host by display_name. retry_if_not_found waits for the
-# appliance to finish registering (handy right after the deploy script boots it).
-data "bloxone_infra_hosts" "niosx" {
-  for_each = var.niosx_hosts
-  filters  = { display_name = each.key }
-  # true makes a miss retry for the full read timeout (20m) and hides real
-  # errors. Keep false so failures surface fast; flip on only if you apply
-  # immediately after a deploy and want to wait for registration to land.
-  retry_if_not_found = false
-}
-
-# Flatten { host => {services=[...]} } into { "host-svc" => {host, service} }.
+# Hosts + services live in niosx_hosts.json so deploy-niosx.sh can update them
+# safely. Shape: { "<label>": { "pool_id": "infra/pool/<id>", "services": [...] } }
+#
+# pool_id MUST be the fully-qualified "infra/pool/<id>". The API returns a bare
+# id at detail_hosts[].pool.pool_id; the provider normalises to the prefixed form
+# and errors with "inconsistent result after apply" if you pass the bare one.
 locals {
+  # Absent on a fresh clone (it is gitignored, per-user) — treat as "no hosts".
+  niosx_hosts = fileexists("${path.module}/niosx_hosts.json") ? jsondecode(file("${path.module}/niosx_hosts.json")) : {}
+
   host_services = merge([
-    for hname, cfg in var.niosx_hosts : {
+    for label, cfg in local.niosx_hosts : {
       for svc in cfg.services :
-      "${hname}-${svc}" => { host = hname, service = svc }
+      "${label}-${svc}" => { label = label, pool_id = cfg.pool_id, service = svc }
     }
   ]...)
 }
 
-# Start the requested services on each host's pool.
 resource "bloxone_infra_service" "svc" {
   for_each       = local.host_services
   name           = each.key
   service_type   = each.value.service
-  pool_id        = data.bloxone_infra_hosts.niosx[each.value.host].results[0].pool_id
+  pool_id        = each.value.pool_id
   desired_state  = "start"
   wait_for_state = true
 
   tags = {
     managed_by = "terraform"
-    host       = each.value.host
+    host       = each.value.label
   }
 }

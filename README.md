@@ -1,120 +1,202 @@
-# NIOS-X On-Prem on Proxmox — repeatable, hands-off deploy
+# NIOS-X On-Prem on Proxmox
 
-Ships the Infoblox NIOS-X On-Prem qcow2 to a Proxmox host, builds a **thin** VM at
-Infoblox minimum spec, and — given a join token — injects it via **cloud-init** so
-the appliance **self-registers to the Infoblox Portal (CSP)** on first boot.
-No console login required.
+One command builds a NIOS-X On-Prem VM on Proxmox, lets it self-register to the
+Infoblox Portal, renames it to something you can find, and starts the services
+you pick.
+
+**Result:** a host named `<you>-<vmid>` in **Infrastructure > Hosts**, running
+DNS/DHCP, in about 5–10 minutes. No console login anywhere.
+
+## Prerequisites
+
+| Where | Needs |
+|-------|-------|
+| Your machine | `ssh` `rsync` `curl` `python3` and [OpenTofu](https://opentofu.org) (`tofu`) |
+| macOS | `brew install opentofu` |
+| Linux | `apt install -y rsync python3 curl` + OpenTofu install script |
+| **Windows** | **WSL2 (Ubuntu) only** — see below |
+| Proxmox host | root SSH by key; `genisoimage` (`apt install -y genisoimage`); a storage named `local` with ISO content |
+| Storage for VMs | **must be `zfspool` or `lvmthin`** — `dir`/NFS will not work (volume naming differs) |
+| Network | DHCP on the bridge, and outbound **443 to csp.infoblox.com** from the VM |
+| Portal | a join token and an API key (below) |
+
+### Windows
+
+Use **WSL2 with Ubuntu**. Git Bash and PowerShell are *not* supported (no
+`rsync`, no `python3`, path and permission differences).
+
+```bash
+wsl --install                      # PowerShell as admin, then reboot
+# inside Ubuntu:
+sudo apt update && sudo apt install -y git rsync python3 curl openssh-client
+curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method deb
+ssh-keygen -t ed25519 && ssh-copy-id root@<proxmox-host>
+git config --global core.autocrlf input
+git clone https://github.com/holland-built/niosx ~/niosx && cd ~/niosx
+```
+
+- Clone into your Linux home (`~`), **not** `/mnt/c` — the qcow2 copy is far slower there.
+- Your Windows downloads are at `/mnt/c/Users/<you>/Downloads/` — use that path for `IMG`.
+- Create the token file with `printf` inside WSL; editing it in Notepad adds a CR that breaks registration.
 
 ## Setup (once)
 
+| # | What | Where it goes | Get it from |
+|---|------|---------------|-------------|
+| 1 | Settings | `config.env` | copy the example, edit |
+| 2 | **Join token** | `~/.config/niosx/jointoken` | Portal → **System > Administration > Join Tokens** |
+| 3 | **CSP API key** | `terraform/secrets.auto.tfvars` | Portal → **your name (top-right) > API Keys** |
+
 ```bash
-cp config.env.example config.env      # gitignored; your Proxmox host, storage, bridge
-$EDITOR config.env
+cp config.env.example config.env && nano config.env        # OWNER, PVE, IMG, POOL, BRIDGE
 
 mkdir -p ~/.config/niosx
-printf '%s\n' '<your-join-token>.ibjt' > ~/.config/niosx/jointoken
+printf '%s\n' 'PASTE-JOIN-TOKEN.ibjt' > ~/.config/niosx/jointoken
 chmod 600 ~/.config/niosx/jointoken
+
+cp terraform/secrets.auto.tfvars.example terraform/secrets.auto.tfvars
+nano terraform/secrets.auto.tfvars                          # infoblox_api_key = "PASTE-API-KEY"
+
+cd terraform && tofu init && cd ..
 ```
 
-Get the token: Infoblox Portal → **System > Administration > Join Tokens** → create
-→ copy the `.ibjt` string. It's reusable, so you only do this once. Tokens are
-secrets — never commit one. The script only ever embeds it in a seed ISO on the
-Proxmox host.
+### The two secrets are different things
 
-## Deploy each time
+People mix these up constantly. The scripts now refuse the swap, but know the difference:
+
+| | Join token | CSP API key |
+|---|---|---|
+| Looks like | long string **ending in `.ibjt`** | long string, no `.ibjt` |
+| Portal page | System > Administration > **Join Tokens** | your name (top-right) > **API Keys** |
+| Used by | the appliance, once, to enrol itself | Terraform, every run, acting as you |
+| Goes in | `~/.config/niosx/jointoken` | `terraform/secrets.auto.tfvars` |
+| If swapped | join token used as API key → **HTTP 401** | API key used as join token → never registers |
+
+Name your join token after yourself: for ~2 minutes before rename, the host is
+called `ZTP_<token-name>_<digits>`.
+
+Both files are gitignored — but gitignore only prevents accidents, not
+`git add -f`, screenshots, or shell history. The join token is also written into
+a seed ISO that stays on the Proxmox host.
+
+## Deploy
 
 ```bash
-./deploy-niosx.sh                                    # AUTO vmid + join + start (no args)
-./deploy-niosx.sh 210 dns-edge                       # pin a specific vmid + name
-./deploy-niosx.sh 210 nios-x-210 dXMt....ibjt        # override token explicitly
+./deploy-niosx.sh                          # prompts for services, does everything
+./deploy-niosx.sh --services dns,dhcp      # non-interactive
+./deploy-niosx.sh --services none          # build the VM only
+./deploy-niosx.sh 210 edge-dns             # pin a specific VMID and name
 ```
 
-| Arg | Meaning | Default |
-|-----|---------|---------|
-| 1 | VMID | **auto** — never-reuse high-water mark (see below) |
-| 2 | VM name | `nios-x-<vmid>` |
-| 3 | **Join token** (`.ibjt`) | stored token file → else none = build only |
+It lists what your tenant actually offers (live from `/api/infra/v1/applications`):
 
-- Token file: `~/.config/niosx/jointoken`. Override the path with `NIOSX_TOKEN_FILE`.
-- Config file: `config.env`. Override the path with `NIOSX_CONFIG`.
-- Image lives on the Proxmox host after the first run; `rsync` skips re-copy unless it changed.
-- Token present (stored or arg3): seed built + attached, VM **started**, registers itself.
-- No token at all: VM built **stopped** — join later by re-running with the token.
+```
+Services available in this tenant:
+   dfp,dns,dhcp,cdc,anycast,orpheus,msad,authn,ntp,discovery,dgw
+
+Which should run on the new host?  (comma-separated, or 'none')
+services [dns,dhcp]:
+```
+
+Registration takes ~2–3 min, services ~3–5 min more; the script waits up to 30.
+**Success:** the host appears in **Infrastructure > Hosts** as `<you>-<vmid>`.
+
+## Add services to an existing host
+
+```bash
+./wire-services.sh <vmid> <owner>-<vmid> dns,dhcp
+```
+
+## Naming in a shared tenant
+
+Everything is prefixed with `OWNER` from `config.env`, because many people share
+one Infoblox **tenant**:
+
+| Object | Name |
+|--------|------|
+| Proxmox VM and CSP host | `<owner>-<vmid>` |
+| Services | `<owner>-<vmid>-dns` |
+
+Use your corporate login or initials — it **must be unique in the tenant**. Two
+people using `lab` on different Proxmox hosts will collide on `lab-202-dns`.
+Use your own API key, never a shared one, so actions stay attributable.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `CSP rejected the API key (HTTP 401)` | join token in `secrets.auto.tfvars`, or a stale key | API key comes from **your name > API Keys** |
+| `does not look like a join token` | API key in the token file | join token ends in `.ibjt` |
+| `timed out waiting ... to register` | no DHCP lease, no outbound 443, or a CR in the token | check the VM got an IP; `tr -d '\r'` the token file |
+| Registered but never finishes | an SMBIOS serial is set | never set one (see below) |
+| `VMID already exists` | id in use | omit the VMID to auto-allocate |
+| `genisoimage: command not found` | missing on Proxmox | `ssh root@<pve> apt install -y genisoimage` |
+| `volume ... does not exist` after import | `POOL` is a `dir` store | use a `zfspool` or `lvmthin` storage |
+| `inconsistent result after apply` | bare pool id | must be `infra/pool/<id>` |
+| Deleted the VM, host still in Portal | orphaned record | Portal > Infrastructure > Hosts > Remove, or `DELETE /api/infra/v1/hosts/<id>` |
+
+## Teardown
+
+```bash
+cd terraform && tofu destroy          # stop/remove the services you started
+ssh root@<pve> 'qm stop <vmid>; qm destroy <vmid> --purge'
+# then remove the host in Portal > Infrastructure > Hosts
+```
+
+<details>
+<summary><b>Reference — flags, VMID allocation, specs, console, static IP</b></summary>
+
+### Arguments and flags
+
+| Arg / flag | Meaning | Default |
+|------------|---------|---------|
+| 1 | VMID | auto (never-reuse counter) |
+| 2 | VM name | `<owner>-<vmid>` |
+| 3 | join token | the stored token file |
+| `--services dns,dhcp` | start these; skips the prompt | prompts |
+| `--services none` | build the VM only | |
 
 ### VMID allocation — never reuse
 
-No VMID arg → the script asks the host for the next id from a **high-water mark**
-at `/etc/niosx/last_vmid` (seed 200). It only ever climbs: delete 203 and the next
-deploy is still **205**, not 203 — even if you delete the highest id. Occupied ids
-are skipped. Pin an explicit id with arg1 to bypass.
+With no VMID argument the next id comes from a high-water mark at
+`/etc/niosx/last_vmid` on the Proxmox host (seed 200). It only climbs: delete
+203 and the next deploy is still 205 — even if you delete the highest id.
+Occupied ids are skipped. An explicit VMID bypasses the counter entirely.
 
-### CSP-side config (services) → Terraform
+### Specs (Infoblox floor — smallest 5 kQPS tier)
 
-Adopting the host + starting DNS/DHCP lives in [`terraform/`](terraform/README.md)
-(`infobloxopen/bloxone` provider). Flow: `./deploy-niosx.sh` (host joins CSP) →
-`cd terraform && tofu apply` (start services).
+4096 MB RAM (balloon) · 3 vCPU · 64 GB **thin** disk · 1 virtio NIC · q35 ·
+serial console. Real disk use starts ~2.4 GB and grows. Anything smaller is
+below Infoblox's documented minimum. Override `RAM`/`CORES`/`DISK` in `config.env`.
 
-## How the automation works
+### ⚠️ Never set an SMBIOS serial
 
-| Step | What happens |
-|------|--------------|
-| Disk | 64 GB **thin** volume (qcow virtual ~58.6 G, real ~2.4 G at first boot) |
-| Join (cloud-init) | seed ISO labelled `cidata` with `user-data` → `host_setup: jointoken:` |
-| Network | **DHCP** on the configured bridge; appliance leases automatically |
-| Register | appliance dials out HTTPS/443 to `csp.infoblox.com` with the token |
+Infoblox uses serial numbers to zero-touch-provision *purchased hardware*. Give a
+VM a made-up serial and the appliance waits to be claimed as hardware — it never
+uses the join token and never dials CSP, with no error anywhere.
 
-## Requirements
+| SMBIOS serial | Result |
+|---------------|--------|
+| none | registered in ~100 seconds |
+| made-up value | no outbound 443 at all, never registered |
+| removed, rebooted | dialled CSP immediately |
 
-| Need | Why |
-|------|-----|
-| Proxmox host, ssh key auth | `qm` build commands |
-| Storage that accepts VM images **and** is thin | 64 GB declared, ~2.4 GB real. A zfspool with `sparse 1` works; a plain `dir` store often refuses images entirely |
-| `genisoimage` on the Proxmox host | builds the cloud-init seed |
-| DHCP on the bridge + outbound 443 to `csp.infoblox.com` | appliance self-registration |
+The script sets none. The trade-off: the console password is derived from the
+serial, so there isn't one — manage via Portal/API, which is the supported path.
 
-## Verify it registered
+### Console
 
-| Check | How |
-|-------|-----|
-| Host appears | CSP → **Infrastructure > Hosts** → look for `nios-x-<vmid>` |
-| Leased IP | on the Proxmox host, ping-sweep the subnet then `ip neigh \| grep -i <vm-mac>` |
-| Device UI up | `https://<leased-ip>` returns 200 |
-
-## Console access
-
-The only console is serial (`--vga serial0`). Login is **`admin`**; the initial
-password is the **last characters of the appliance's serial number**.
-
-**These VMs deliberately have no SMBIOS serial** (see the warning below), so no
-console password can be derived and the console is effectively unavailable. That
-is an accepted trade-off: registration matters more, and the supported management
-path is the Infoblox Portal / API, not the console.
-
-You can still read the console output from the Proxmox host:
+Serial only, and with no serial number there is no derivable password. To read
+raw console output from the Proxmox host:
 
 ```bash
 { printf "\n"; sleep 1; } | socat -T3 - UNIX-CONNECT:/var/run/qemu-server/<vmid>.serial0
 ```
 
-## ⚠️ Do not set an SMBIOS serial
+### Static IP instead of DHCP
 
-Infoblox uses serial numbers to zero-touch-provision **purchased hardware**. If you
-give a VM a made-up serial, the appliance waits to be claimed as hardware and
-**never uses the join token — it will not even dial CSP**.
-
-Observed directly on identical VMs:
-
-| SMBIOS serial | Result |
-|---------------|--------|
-| none | registered to CSP in **~100 seconds** |
-| `NIOSX-202` (made up) | **no outbound 443 at all**, never registered |
-| serial removed, rebooted | dialled CSP immediately, pulled ~1 GB of services |
-
-The script therefore sets **no** serial. Don't add one.
-
-## Static IP instead of DHCP
-
-Add a `network-config` (cloud-init v2) to the seed before `genisoimage`:
+**Not implemented by the script** — DHCP is the tested path. To do it by hand,
+add a cloud-init v2 `network-config` to the seed before `genisoimage`:
 
 ```yaml
 version: 2
@@ -126,27 +208,4 @@ ethernets:
     nameservers: { addresses: [<dns1>, <dns2>] }
 ```
 
-DHCP is the tested path here and is simplest.
-
-## Specs (Infoblox floor, smallest 5 kQPS tier)
-
-| Resource | Value |
-|----------|-------|
-| RAM | 4096 MB (balloon on) |
-| vCPU | 3 |
-| Disk | 64 GB thin |
-| NIC | 1 × virtio |
-| Machine | q35, serial console |
-
-Below 4 GB / 3 vCPU / 64 GB is under Infoblox's documented minimum. Thin
-provisioning is what makes the 64 GB affordable — real usage starts around 2.4 GB
-and grows on demand.
-
-## Notes
-
-- Hosts register under an auto-generated ZTP name, e.g.
-  `ZTP_<join-token-name>_<digits>` — not the Proxmox VM name. Find yours in the
-  Portal, or via `GET /api/infra/v1/detail_hosts` filtered on its IP.
-- A destroyed VM leaves its CSP host record behind. Delete it with
-  `DELETE /api/infra/v1/hosts/<id>` or it lingers as a degraded orphan.
-- The qcow2's virtual size is ~58.6 GB; the script grows it to 64 GB, still sparse.
+</details>
