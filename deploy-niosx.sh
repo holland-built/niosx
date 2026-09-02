@@ -244,7 +244,24 @@ if [ -z "$VMID" ]; then
 fi
 NAME=${NAME:-$OWNER-$VMID}
 
-echo ">> 1/6  Ship image Mac -> Proxmox"
+# If the caller pinned a VMID, say something useful *before* shipping the image.
+# (Auto-allocated ids already skip anything occupied.)
+if EXIST=$(ssh "$PVE" "qm config $VMID" 2>/dev/null); then
+  ex_name=$(printf '%s\n' "$EXIST" | sed -n 's/^name: //p')
+  ex_stat=$(ssh "$PVE" "qm status $VMID" 2>/dev/null | awk '{print $2}')
+  echo "!! VMID $VMID is already in use: \"$ex_name\" ($ex_stat)" >&2
+  if printf '%s\n' "$EXIST" | grep -q "seed-niosx-$VMID.iso"; then
+    echo "   It was built by this tool. If it is a leftover from a failed run:" >&2
+    echo "     ./niosx teardown $VMID --dry-run     # check first" >&2
+    echo "     ./niosx teardown $VMID" >&2
+  else
+    echo "   It was NOT built by this tool — leave it alone." >&2
+  fi
+  echo "   Or omit --vmid to get the next free id." >&2
+  exit 1
+fi
+
+echo ">> 1/6  Ship image local -> Proxmox"
 ssh "$PVE" "mkdir -p $REMOTE"
 rsync -aP "$IMG" "$PVE:$REMOTE/$BASENAME"
 
@@ -252,7 +269,7 @@ echo ">> 2/6  Build VM $VMID"
 ssh "$PVE" bash -s <<EOF
 set -euo pipefail
 if qm status $VMID >/dev/null 2>&1; then
-  echo "!! VMID $VMID already exists. Pick another VMID." >&2; exit 1
+  echo "!! VMID $VMID appeared since the preflight check — aborting." >&2; exit 1
 fi
 qm create $VMID --name $NAME --machine q35 --ostype l26 \
   --memory $RAM --balloon $RAM --cores $CORES \

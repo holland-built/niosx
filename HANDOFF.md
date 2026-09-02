@@ -52,7 +52,7 @@ Currently live: `sholland-203` at 192.168.100.113 running DNS + DHCP.
 |-----|------|
 | Interactive prompts / numbered service menu | logic tested, but never driven from a real TTY — needs a human to eyeball |
 | Windows | documented as WSL2-only; never actually run on Windows |
-| Resume of a half-built VM | any failure after `qm create` leaves a VM that blocks re-runs; no `--resume` |
+| Resume of a half-built VM | there is still no `--resume`, but a pinned VMID that is already taken now fails *before* the image is shipped and says whether the VM was built by this tool, with the exact teardown command if so |
 | `OWNER` uniqueness | documented, not enforced. Two people using the same OWNER collide on service names |
 | Teardown journal | written but never read |
 
