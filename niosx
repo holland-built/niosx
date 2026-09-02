@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Single entry point for the NIOS-X lab tooling.
+#
+#   ./niosx deploy   [options]        build a VM, join it to the Portal, start services
+#   ./niosx add      <vmid> <name> <services>   add services to an existing host
+#   ./niosx teardown <vmid> [options] destroy a node: services, Portal host, VM
+#   ./niosx list                      what you have, in Proxmox and the Portal
+#
+# Each subcommand is a thin pass-through; run any of them with --help.
+set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+usage() {
+  cat <<'HELPEOF'
+NIOS-X on Proxmox.
+
+  ./niosx deploy [--services dns,ntp] [--vmid N] [--name X]
+        Build a VM, let it register with Infoblox, start the services.
+        With no options it prompts for everything.
+
+  ./niosx add <vmid> <host-name> <services>
+        Add services to a host that already exists, e.g.
+        ./niosx add 205 sholland-205 dns,dhcp
+
+  ./niosx teardown <vmid> [--dry-run]
+        Destroy one node: its services, its Portal host, its VM and its
+        seed ISO. Start with --dry-run.
+
+  ./niosx list
+        Show your VMs and how they line up with the Portal.
+
+Setup (once): config.env | ~/.config/niosx/jointoken | terraform/secrets.auto.tfvars
+Full docs: README.md
+HELPEOF
+}
+
+cmd=${1:-}; [ $# -gt 0 ] && shift || true
+case "$cmd" in
+  deploy)          exec "$HERE/deploy-niosx.sh" "$@" ;;
+  add|add-services) exec "$HERE/add-services.sh" "$@" ;;
+  teardown|destroy) exec "$HERE/teardown-niosx.sh" "$@" ;;
+  list)            exec "$HERE/list-niosx.sh" "$@" ;;
+  ""|-h|--help)    usage; exit 0 ;;
+  *) echo "!! unknown command: $cmd" >&2; echo >&2; usage >&2; exit 2 ;;
+esac

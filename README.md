@@ -81,6 +81,15 @@ a seed ISO that stays on the Proxmox host.
 
 ## Deploy
 
+Everything runs through one command — `./niosx <subcommand>`:
+
+| Command | Does |
+|---------|------|
+| `./niosx deploy` | build a VM, join it, start services |
+| `./niosx add <vmid> <name> <services>` | add services to an existing host |
+| `./niosx teardown <vmid>` | destroy a node (start with `--dry-run`) |
+| `./niosx list` | your VMs vs the Portal vs Terraform |
+
 ```bash
 ./deploy-niosx.sh                          # prompts for services, does everything
 ./deploy-niosx.sh --services dns,dhcp      # non-interactive
