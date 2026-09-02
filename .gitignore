@@ -12,3 +12,7 @@ config.env
 # Local scratch
 *.log
 tmp/
+
+# Python bytecode from the test suite
+__pycache__/
+*.pyc

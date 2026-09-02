@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+[ -n "${STUB_LOG:-}" ] && echo "RSYNC" >> "$STUB_LOG"
+[ "${STUB_HALT:-0}" = 1 ] && { echo "STUB-HALT: rsync" >&2; exit 99; }
+exit 0

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stub CSP. NEVER logs -H values: they carry the API key.
+#   STUB_HTTP=401         make the applications call fail
+#   STUB_APPS_FAIL=1      make it unreachable (curl-level failure)
+#   STUB_NAME_TAKEN=1     the tenant already has a host with that name
+url=""; only_code=0; want_code=0
+for a in "$@"; do
+  case "$a" in
+    https://*) url=$a ;;
+    /dev/null) only_code=1 ;;
+    *%{http_code}*) want_code=1 ;;
+  esac
+done
+code=${STUB_HTTP:-200}
+body='{"results":{"applications":["dfp","dns","dhcp","cdc","anycast","orpheus","msad","authn","ntp","discovery","dgw"]}}'
+case "$url" in
+  *detail_hosts*)
+    if [ "${STUB_NAME_TAKEN:-0}" = 1 ]; then body='{"results":[{"id":"infra/host/1"}]}'
+    else                                    body='{"results":[]}'; fi ;;
+esac
+[ "${STUB_APPS_FAIL:-0}" = 1 ] && exit 7
+if [ "$only_code" = 1 ]; then printf '%s' "$code"; exit 0; fi
+if [ "$want_code" = 1 ]; then printf '%s\n%s' "$body" "$code"; exit 0; fi
+printf '%s' "$body"

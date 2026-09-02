@@ -13,24 +13,30 @@ CONFIG=${NIOSX_CONFIG:-$HERE/config.env}
 [ -f "$CONFIG" ] || { echo "!! missing $CONFIG" >&2; exit 1; }
 # shellcheck source=/dev/null
 . "$CONFIG"
+# shellcheck source=/dev/null
+. "$HERE/lib.sh"
+niosx_check_no_cr PVE
 
 VMID=${1:?usage: add-services.sh <vmid> <label> <services>}
 LABEL=${2:?usage: add-services.sh <vmid> <label> <services>}
 SERVICES=${3:?usage: add-services.sh <vmid> <label> <services>}
+niosx_check_vmid "$VMID"
+niosx_check_name "$LABEL" "host name"
 SERVICES=$(printf '%s' "$SERVICES" | tr -d '[:space:]')
 case "$SERVICES" in
   ""|none) echo "!! no services requested — nothing to do" >&2; exit 1 ;;
 esac
 
 TF=$HERE/terraform
+SEC=${NIOSX_SECRETS:-$TF/secrets.auto.tfvars}
 CSP=${CSP_URL:-https://csp.infoblox.com}
 command -v tofu >/dev/null 2>&1 || { echo "!! missing required tool: tofu" >&2; exit 1; }
 
 KEY=$(sed -nE 's/^[[:space:]]*infoblox_api_key[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' \
-        "$TF/secrets.auto.tfvars" 2>/dev/null | tail -1 | tr -d '\r' || true)
+        "$SEC" 2>/dev/null | tail -1 | tr -d '\r' || true)
 case "$KEY" in
-  "") echo "!! no CSP API key in $TF/secrets.auto.tfvars" >&2; exit 1 ;;
-  REPLACE_WITH_CSP_API_KEY) echo "!! $TF/secrets.auto.tfvars still has the placeholder" >&2; exit 1 ;;
+  "") echo "!! no CSP API key in $SEC" >&2; exit 1 ;;
+  REPLACE_WITH_CSP_API_KEY) echo "!! $SEC still has the placeholder" >&2; exit 1 ;;
   *.ibjt) echo "!! that is a JOIN TOKEN, not a CSP API key (Portal > your name > API Keys)" >&2; exit 1 ;;
 esac
 
@@ -86,9 +92,11 @@ echo ">> registered. pool_id = infra/pool/$POOL"
 
 # Rename away from the generated ZTP name. PATCH returns 501; PUT needs pool_id.
 if [ -n "${HOSTID:-}" ]; then
+  BODY=$(python3 -c 'import json,sys; print(json.dumps({"display_name": sys.argv[1], "pool_id": sys.argv[2]}))' \
+           "$LABEL" "infra/pool/$POOL")
   rc=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --max-time 40 \
         -H "Authorization: Token $KEY" -H 'Content-Type: application/json' \
-        -d "{\"display_name\":\"$LABEL\",\"pool_id\":\"infra/pool/$POOL\"}" \
+        -d "$BODY" \
         "$CSP/api/infra/v1/hosts/$HOSTID" || echo 000)
   if [ "$rc" = "200" ]; then echo ">> renamed host in CSP to $LABEL"
   else echo "!! rename failed (HTTP $rc) — continuing; host keeps its ZTP name" >&2; fi

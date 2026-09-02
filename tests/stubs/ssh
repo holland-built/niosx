@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Stub Proxmox. Answers the few reads deploy/list make, records what would have
+# been run, and never contacts a real host.
+#   STUB_QM_CONFIG   text `qm config` should return ("" = VM does not exist)
+#   STUB_QM_STATUS   stopped | running
+#   STUB_HALT=1      abort (99) at the first step that would change anything
+args="$*"
+log() { [ -n "${STUB_LOG:-}" ] && printf '%s\n' "$1" >> "$STUB_LOG"; return 0; }
+
+case "$args" in
+  *last_vmid*"printf"*)   log "ALLOCATE"; echo "${STUB_NEXT_VMID:-205}"; exit 0 ;;
+  *"qm config"*)
+      log "QM-CONFIG"
+      [ -n "${STUB_QM_CONFIG:-}" ] || exit 1
+      printf '%s\n' "$STUB_QM_CONFIG"; exit 0 ;;
+  *"qm status"*)          log "QM-STATUS"; echo "status: ${STUB_QM_STATUS:-stopped}"; exit 0 ;;
+esac
+
+if [ "${STUB_HALT:-0}" = 1 ]; then echo "STUB-HALT: $args" >&2; exit 99; fi
+
+case "$args" in
+  *"mkdir -p /var/lib"*)  log "MKDIR"; exit 0 ;;
+  *"qm start"*)           log "QM-START"; exit 0 ;;
+  *"bash -s"*)            log "REMOTE-SCRIPT"; cat >> "${STUB_CAPTURE:-/dev/null}"; exit 0 ;;
+esac
+log "SSH: $args"; exit 0

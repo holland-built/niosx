@@ -32,6 +32,11 @@ CONFIG=${NIOSX_CONFIG:-$HERE/config.env}
 [ -f "$CONFIG" ] || { echo "!! missing $CONFIG" >&2; exit 2; }
 # shellcheck source=/dev/null
 . "$CONFIG"
+# shellcheck source=/dev/null
+. "$HERE/lib.sh"
+niosx_check_no_cr PVE OWNER
+# shellcheck disable=SC2034  # read by niosx_die in lib.sh
+NIOSX_DIE_CODE=2          # this script uses 2 for "refused before changing anything"
 
 VMID=""; LABEL_OPT=""; DRY=0; CONFIRM_OPT=""
 while [ $# -gt 0 ]; do
@@ -52,6 +57,9 @@ done
 
 [ -n "$VMID" ] || { usage; exit 2; }
 case "$VMID" in ''|*[!0-9]*) echo "!! VMID must be a number (got '$VMID')" >&2; exit 2 ;; esac
+# validate what the caller typed before it reaches a filter, a regex or a shell
+[ -z "$LABEL_OPT" ] || niosx_check_label "$LABEL_OPT" "--label"
+[ -z "$CONFIRM_OPT" ] || niosx_check_label "$CONFIRM_OPT" "--confirm"
 : "${PVE:?set PVE in config.env}"
 : "${OWNER:?set OWNER in config.env}"
 case "$OWNER" in CHANGEME|"") echo "!! set a real OWNER in config.env" >&2; exit 2 ;; esac
@@ -60,16 +68,39 @@ for t in ssh curl python3 tofu; do
 done
 
 TF=$HERE/terraform
+SEC=${NIOSX_SECRETS:-$TF/secrets.auto.tfvars}
 CSP=${CSP_URL:-https://csp.infoblox.com}
 JSON=$TF/niosx_hosts.json
 JOURNAL_DIR=${NIOSX_STATE_DIR:-$HOME/.config/niosx/teardown}
 JOURNAL=$JOURNAL_DIR/$VMID.json
 
+# A journal file only exists between the first destructive step and the last
+# one, so finding one here means a previous teardown of this VMID was
+# interrupted. Say what it recorded — every step below is safe to re-run.
+if [ -f "$JOURNAL" ]; then
+  echo "!! a previous teardown of VMID $VMID did not finish" >&2
+  python3 - "$JOURNAL" >&2 <<'PY'
+import json, os, sys, time
+path = sys.argv[1]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+print("   started : %s" % time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path))))
+for k in ("label", "pve", "mac", "csp_id", "pool"):
+    if d.get(k):
+        print("   %-8s: %s" % (k, d[k]))
+print("   journal : %s" % path)
+PY
+  echo "   Continuing now finishes whatever is left; each step re-runs safely." >&2
+  echo >&2
+fi
+
 KEY=$(sed -nE 's/^[[:space:]]*infoblox_api_key[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' \
-        "$TF/secrets.auto.tfvars" 2>/dev/null | tail -1 | tr -d '\r' || true)
+        "$SEC" 2>/dev/null | tail -1 | tr -d '\r' || true)
 case "$KEY" in
-  "") echo "!! no CSP API key in $TF/secrets.auto.tfvars" >&2; exit 2 ;;
-  REPLACE_WITH_CSP_API_KEY) echo "!! $TF/secrets.auto.tfvars still has the placeholder" >&2; exit 2 ;;
+  "") echo "!! no CSP API key in $SEC" >&2; exit 2 ;;
+  REPLACE_WITH_CSP_API_KEY) echo "!! $SEC still has the placeholder" >&2; exit 2 ;;
   *.ibjt) echo "!! that is a JOIN TOKEN, not a CSP API key" >&2; exit 2 ;;
 esac
 rc=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H "Authorization: Token $KEY" \
@@ -100,6 +131,7 @@ if [ "$VM_GONE" = "0" ] && [ -n "$LABEL_OPT" ] && [ "$LABEL_OPT" != "$VM_NAME" ]
   echo "   --label is only for a VM that is already gone." >&2; exit 2
 fi
 LABEL=${LABEL_OPT:-${VM_NAME:-$OWNER-$VMID}}
+niosx_check_label "$LABEL" "host name"
 
 csp_lookup() {  # $1 = filter expression; prints ERR on any failure
   out=$(curl -s --max-time 40 -w '\n%{http_code}' -G -H "Authorization: Token $KEY" \
@@ -142,7 +174,7 @@ if [ "$N_MATCH" = "1" ]; then
   fi
   # add-services.sh keys niosx_hosts.json and the Terraform resources by the
   # CSP display name, so that is the authoritative label once we have a match.
-  if [ -z "$LABEL_OPT" ] && [ -n "$CSP_NAME" ]; then LABEL=$CSP_NAME; fi
+  if [ -z "$LABEL_OPT" ] && [ -n "$CSP_NAME" ]; then LABEL=$CSP_NAME; niosx_check_label "$LABEL" "Portal host name"; fi
   if [ "$VM_GONE" = "1" ]; then
     [ "$CSP_NAME" = "$LABEL" ] || { echo "!! name-only match '$CSP_NAME' != '$LABEL'. Nothing done." >&2; exit 2; }
     case "$CSP_NAME" in

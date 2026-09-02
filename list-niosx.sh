@@ -7,23 +7,38 @@ CONFIG=${NIOSX_CONFIG:-$HERE/config.env}
 [ -f "$CONFIG" ] || { echo "!! missing $CONFIG" >&2; exit 2; }
 # shellcheck source=/dev/null
 . "$CONFIG"
+# shellcheck source=/dev/null
+. "$HERE/lib.sh"
 : "${PVE:?set PVE in config.env}"; : "${OWNER:?set OWNER in config.env}"
+niosx_check_no_cr PVE OWNER
 TF=$HERE/terraform; CSP=${CSP_URL:-https://csp.infoblox.com}
+SEC=${NIOSX_SECRETS:-$TF/secrets.auto.tfvars}
+JOURNAL_DIR=${NIOSX_STATE_DIR:-$HOME/.config/niosx/teardown}
 
 KEY=$(sed -nE 's/^[[:space:]]*infoblox_api_key[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' \
-        "$TF/secrets.auto.tfvars" 2>/dev/null | tail -1 | tr -d '\r' || true)
+        "$SEC" 2>/dev/null | tail -1 | tr -d '\r' || true)
 
 echo "== Proxmox ($PVE) =="
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$PVE" \
-  'for c in /etc/pve/qemu-server/*.conf; do
-     [ -e "$c" ] || continue
-     id=$(basename "$c" .conf)
-     n=$(sed -n "s/^name: //p" "$c")
-     m=$(sed -nE "s/^net0:.*virtio=([0-9A-Fa-f:]{17}).*/\1/p" "$c" | tr "A-Z" "a-z")
-     grep -q "seed-niosx-$id.iso" "$c" 2>/dev/null || continue
-     printf "  %-6s %-22s %-18s %s\n" "$id" "$n" "$m" "$(qm status $id 2>/dev/null | awk "{print \$2}")"
-   done; echo "  next VMID: $(( $(cat /etc/niosx/last_vmid 2>/dev/null || echo 200) + 1 ))"' 2>/dev/null \
-  || echo "  (cannot reach $PVE)"
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$PVE" bash -s -- "$OWNER" <<'EOS' 2>/dev/null
+owner=$1
+for c in /etc/pve/qemu-server/*.conf; do
+  [ -e "$c" ] || continue
+  id=$(basename "$c" .conf)
+  n=$(sed -n "s/^name: //p" "$c")
+  m=$(sed -nE "s/^net0:.*virtio=([0-9A-Fa-f:]{17}).*/\1/p" "$c" | tr "A-Z" "a-z")
+  seed=no; grep -q "seed-niosx-$id.iso" "$c" 2>/dev/null && seed=yes
+  mine=no; case "$n" in "$owner"-*) mine=yes ;; esac
+  # a VM is ours if it carries our seed, or at least our name prefix
+  [ "$seed" = yes ] || [ "$mine" = yes ] || continue
+  note=""
+  [ "$seed" = no ] && note="   <- no join seed: ./niosx deploy --resume $id"
+  printf "  %-6s %-22s %-18s %s%s\n" "$id" "$n" "$m" "$(qm status $id 2>/dev/null | awk "{print \$2}")" "$note"
+done
+echo "  next VMID: $(( $(cat /etc/niosx/last_vmid 2>/dev/null || echo 200) + 1 ))"
+EOS
+then
+  echo "  (cannot reach $PVE)"
+fi
 
 echo
 echo "== Infoblox Portal (yours) =="
@@ -60,5 +75,28 @@ else
   echo "  (state unreadable — run 'tofu init' in terraform/)"
 fi
 echo
+echo "== Interrupted teardowns =="
+found=0
+for j in "$JOURNAL_DIR"/*.json; do
+  [ -e "$j" ] || continue
+  found=1
+  python3 - "$j" <<'PY'
+import json, os, sys, time
+path = sys.argv[1]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+vmid = d.get("vmid") or os.path.basename(path)[:-5]
+print("  vmid %-6s %-22s started %s" % (
+    vmid, d.get("label") or "?",
+    time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))))
+print("         finish it: ./niosx teardown %s" % vmid)
+PY
+done
+if [ "$found" = 0 ]; then echo "  (none)"; fi
+
+echo
 echo "Orphans: a Portal host with no Proxmox VM needs './niosx teardown <vmid>'"
 echo "or removal in the Portal. A ZTP_* name means it never got renamed."
+echo "A VM with no join seed never registers — finish it with './niosx deploy --resume <vmid>'."

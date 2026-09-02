@@ -25,19 +25,36 @@ DNS/DHCP, in about 5–10 minutes. No console login anywhere.
 Use **WSL2 with Ubuntu**. Git Bash and PowerShell are *not* supported (no
 `rsync`, no `python3`, path and permission differences).
 
-```bash
+```powershell
 wsl --install                      # PowerShell as admin, then reboot
+```
+
+```bash
 # inside Ubuntu:
 sudo apt update && sudo apt install -y git rsync python3 curl openssh-client
-curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method deb
+curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+chmod +x install-opentofu.sh
+sudo ./install-opentofu.sh --install-method deb     # OpenTofu's own installer
+rm -f install-opentofu.sh
 ssh-keygen -t ed25519 && ssh-copy-id root@<proxmox-host>
 git config --global core.autocrlf input
 git clone https://github.com/holland-built/niosx ~/niosx && cd ~/niosx
+./niosx test                       # confirms the tooling works before you build anything
 ```
 
 - Clone into your Linux home (`~`), **not** `/mnt/c` — the qcow2 copy is far slower there.
 - Your Windows downloads are at `/mnt/c/Users/<you>/Downloads/` — use that path for `IMG`.
+  A space in the file name is fine; it is sanitised before it reaches Proxmox.
 - Create the token file with `printf` inside WSL; editing it in Notepad adds a CR that breaks registration.
+- Edit `config.env` with `nano`/`vi`, not Notepad. If you do save CRLF endings,
+  the scripts now stop and say so instead of failing three steps later.
+
+**Status: hardened for WSL2, not yet run end-to-end on Windows.** The
+line-ending and filename-with-spaces traps are covered by tests
+(`./niosx test`); the rest of the path — `wsl --install`, the OpenTofu deb, an
+`ssh` key from WSL to Proxmox, and a ~2 GB qcow2 read out of `/mnt/c` — has
+never been executed on a Windows machine. If you are the first, please report
+back what broke.
 
 ## Setup (once)
 
@@ -89,6 +106,8 @@ Everything runs through one command — `./niosx <subcommand>`:
 | `./niosx add <vmid> <name> <services>` | add services to an existing host |
 | `./niosx teardown <vmid>` | destroy a node (start with `--dry-run`) |
 | `./niosx list` | your VMs vs the Portal vs Terraform |
+| `./niosx deploy --resume <vmid>` | finish a node whose deploy died half way |
+| `./niosx test` | run the test suite (touches no host, no tenant) |
 
 ```bash
 ./deploy-niosx.sh                          # prompts for services, does everything
@@ -110,6 +129,35 @@ services [dns,dhcp]:
 Registration takes ~2–3 min, services ~3–5 min more; the script waits up to 30.
 **Success:** the host appears in **Infrastructure > Hosts** as `<you>-<vmid>`.
 
+## Resume a half-built node
+
+A deploy that dies after the VM is created leaves something behind. `./niosx
+list` shows it, and marks a VM that has no join seed — one that will never
+register on its own:
+
+```
+  250    sholland-250    aa:bb:cc:dd:ee:ff   stopped   <- no join seed: ./niosx deploy --resume 250
+```
+
+```bash
+./niosx deploy --resume 250                    # finish it
+./niosx deploy --resume 250 --services dns     # finish it and start services
+```
+
+Resume looks at what the VM already has and runs only the missing steps —
+import the disk, build and attach the join seed, start it, add services. Each
+skipped step says so. A VM that already booted without a seed is stopped,
+seeded and started again, because an appliance that boots without cloud-init
+never reads one later.
+
+It refuses to touch a VM that is neither carrying this tool's seed ISO nor
+named `<OWNER>-<vmid>`, and if it matched on the name alone it asks first.
+When a resume is not what you want:
+
+```bash
+./niosx teardown 250 --dry-run                 # see what would go
+```
+
 ## Add services to an existing host
 
 ```bash
@@ -127,8 +175,28 @@ one Infoblox **tenant**:
 | Services | `<owner>-<vmid>-dns` |
 
 Use your corporate login or initials — it **must be unique in the tenant**. Two
-people using `lab` on different Proxmox hosts will collide on `lab-202-dns`.
+people using `lab` on different Proxmox hosts would collide on `lab-202-dns`,
+so this is now enforced rather than requested:
+
+| Rule | What happens |
+|------|--------------|
+| `OWNER` is `CHANGEME`, empty, or generic (`lab`, `test`, `demo`, `poc`, `se`…) | refused before anything is built |
+| `OWNER` / host name outside `A-Z a-z 0-9 -` | refused — the name reaches a root shell on Proxmox and a Portal record |
+| Host name already exists in the tenant | refused, with the name that clashed |
+
 Use your own API key, never a shared one, so actions stay attributable.
+
+## Tests
+
+```bash
+./niosx test
+```
+
+Runs the prompts, the flags, the validation, `--resume` and teardown's guard
+rails against stubbed `ssh`/`rsync`/`curl`/`tofu` — no host and no tenant is
+contacted, and your own `config.env` and API key are never read. The
+interactive path is driven through a real pty, because that is the only way to
+reach code behind `[ -t 0 ]`. See `tests/README.md`.
 
 ## Troubleshooting
 
@@ -143,6 +211,11 @@ Use your own API key, never a shared one, so actions stay attributable.
 | `volume ... does not exist` after import | `POOL` is a `dir` store | use a `zfspool` or `lvmthin` storage |
 | `inconsistent result after apply` | bare pool id | must be `infra/pool/<id>` |
 | Deleted the VM, host still in Portal | orphaned record | Portal > Infrastructure > Hosts > Remove, or `DELETE /api/infra/v1/hosts/<id>` |
+| `OWNER "lab" is too generic` | shared tenant | use your corporate login or initials in `config.env` |
+| `name ... contains characters that are not allowed` | space, quote or `;` in a name | letters, digits and hyphens only |
+| `already exists in this shared tenant` | someone (or you) has that host name | pick another `--name`, or tear the old one down |
+| `PVE in config.env ends with a carriage return` | `config.env` saved by a Windows editor | `sed -i 's/\r$//' config.env` |
+| Deploy died after the VM was created | half-built node | `./niosx deploy --resume <vmid>` |
 
 ## Teardown
 
@@ -175,6 +248,7 @@ Portal record.
 | 3 | join token | the stored token file |
 | `--services dns,dhcp` | start these; skips the prompt | prompts |
 | `--services none` | build the VM only | |
+| `--resume VMID` | finish a half-built VM instead of creating one | |
 
 ### VMID allocation — never reuse
 
