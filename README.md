@@ -152,7 +152,7 @@ Each one leaves a note in `~/.config/niosx/pending/<vmid>.json`. Later:
 ```
 
 ```
-  207   sholland-207     vm:running  portal:sholland-207 192.168.100.161   services:dns,dhcp
+  207   <you>-207        vm:running  portal:<you>-207 10.0.0.9              services:dns,dhcp
         ready. Finish with: ./niosx check 207 --finish
 ```
 
